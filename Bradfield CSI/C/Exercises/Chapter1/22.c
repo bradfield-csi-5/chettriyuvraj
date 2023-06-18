@@ -18,9 +18,8 @@ notabsnotabsnotabsnotabsnotabsnotabsnotabsnotabsnotabsnotabsnotabsnotabsnotabs
 */
 
 
-
-#define MAXLINELENGTH 8  /* Assuming: MAXLINELENGTH >= tabstop */
-#define TABSTOP 20
+#define MAXLINELENGTH 20 /* Assuming MAXLINELENGTH always > TABSTOP */
+#define TABSTOP 8
 #define IN 1
 #define OUT 0
 
@@ -28,7 +27,7 @@ notabsnotabsnotabsnotabsnotabsnotabsnotabsnotabsnotabsnotabsnotabsnotabsnotabs
 
 int main() {
      int charCount = 0, curChar, prevChar = '\0', state = OUT;
-     int remainingSpaces; /* Used to compute distance to next tabstop *      /
+     int remainingSpaces; /* Used to compute distance to next tabstop */
 
     for(int i = 0; i < MAXLINELENGTH; i++) /* Print columns for reference */
         printf("%d", i%10);
@@ -42,9 +41,13 @@ int main() {
             continue;
         }
 
-        if (charCount == 0 && prevChar != '\n' && prevChar != '\t' && prevChar != ' ' && prevChar != '\n' && prevChar != '\0' && curChar != '\n' && curChar != '\t' && curChar != ' ') { /* Handling continued input from previous line using prevChar variable */
-            printf("-\n-");
-            ++charCount;
+        if (charCount == 0 ) { /* Either very first char - or state = IN/OUT and moving into next line */
+            if (prevChar != '\n' && prevChar != '\t' && prevChar != ' ' && prevChar != '\n' && prevChar != '\0' && curChar != '\n' && curChar != '\t' && curChar != ' ') { /* state = IN and moving into next line */
+                printf("-\n-");
+                ++charCount;
+            } else if (prevChar == ' ' || curChar == ' ') { /* Space separated input - other cases such as tabs, newlines and continued input handled separately */
+                printf("\n");
+            }
         }
 
         /* Handling state */
@@ -58,14 +61,11 @@ int main() {
         if (curChar == '\t') { /* Handling tabs separately */
             remainingSpaces = TABSTOP - (charCount % TABSTOP); /* Distance to next tabstop */
             charCount += remainingSpaces;
-            if (charCount >= MAXLINELENGTH) { /* If tab spaced over multiple lines or completely uses current line - handle */
-                printf("\n");
-                charCount %= MAXLINELENGTH;
-                for (int i = 0; i < charCount; i++) /* Fill up remaining tab spaces with blanks */
-                    printf(" ");
-            } else { /* If tab accomodated by current line simply print it */
-                putchar(curChar); 
+            if (charCount >= MAXLINELENGTH) { /* If tab spaced exceeds current line */
+                printf("\n"); /* Go to nextline then insert tab */
+                charCount = TABSTOP; 
             }
+            putchar(curChar); /* Print tab */
         } else { /* All other characters */
             putchar(curChar);
             ++charCount;
