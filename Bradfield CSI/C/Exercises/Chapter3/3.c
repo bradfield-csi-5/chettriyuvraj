@@ -22,7 +22,7 @@ int main() {
     int curChar = '\0', prevChar = '\0', prevPrevChar = '\0';
 
     while((curChar = getchar()) != EOF) {
-        if (prevChar == '-' && (islower(curChar) || isupper(curChar) || isdigit(curChar))) { /* If prevChar is a hyphen and curChar is a valid letter or digit */
+        if (prevChar == '-' && isalnum(curChar)) { /* If prevChar is a hyphen and curChar is a valid letter or digit */
             if (isRangeValid(prevPrevChar, curChar)) { /* If valid range for expansion - expand*/
             
                 for(char i = prevPrevChar + 1; i <= curChar; i++) /* Expand from prevPrevChar + 1  */
