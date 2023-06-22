@@ -8,8 +8,6 @@ push()
 pop()
 */
 
-/* Note: This has been split into multiple files -> main.c getch.c getops.c stack.c -> main.c corresponds to 4.c */
-
 #include<stdio.h>
 #include<ctype.h>
 #include "calc.h"
