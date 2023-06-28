@@ -4,6 +4,8 @@
 
 /*
 DETAB!
+(Assuming tabstop arguments in ascending)
+
 1. Store the 'tabstop columns' as 'tabstops' by computing the difference between 'prevStop' and 'curStop' -> Eg. 5,8,11 gets stored as [5,3,3,8] where the last value is the default tab stop
 2. Now start maintaining the charCount -> each time storing it as charCount % currentTabStop -> changing tab stops as and when we reach them -> keeping the last tab stop as the default once all others have been exhausted
 PS. Print a long string of zeroes at the start for reference
