@@ -35,7 +35,7 @@ reverse the actions of fopen
 
 typedef struct _iobuf {
     int cnt; // chars left in buffer -> this indicates that 'cnt' number of characters can still be written to buffer 
-    char *ptr; // next char pos
+    char *ptr; // next char pos i.e next available blank position
     char *base; // start of buffer
     int flag; // file mode
     int fd; // file descriptior
@@ -71,6 +71,7 @@ int main() {
     testFile -> fd = 1;
     testFile -> flag |= _WRITE; // set as open for write
     _flushbuf('y', testFile);
+    // fflush(testFile);
 
     // test fclose
     fclose(_iob + 3);
@@ -93,7 +94,7 @@ int _flushbuf(int c, FILE *fp) {
     }
     
 
-    charsToWrite = (fp -> ptr) - (fp -> base) + 1;
+    charsToWrite = (fp -> ptr) - (fp -> base);
     if ( (fp->ptr != fp->base) && ((n = write(fp -> fd, fp -> base, charsToWrite)) < charsToWrite) || (n == -1) ) {  // write out entire buffer to file
         fp -> flag |= _ERR; // some error or not all bytes written
         return EOF;
@@ -101,9 +102,11 @@ int _flushbuf(int c, FILE *fp) {
 
     // set all struct variables correctly and add the provided character as first char to buffer
     fp -> cnt = BUFSIZE; // indicates that 'cnt' chars can be stored in buffer
-    if (c != EOF) 
+    fp -> ptr = fp -> base;
+    if (c != EOF) {
         *fp -> base = c;
-    fp -> ptr = fp -> base ++;
+        fp -> ptr = fp -> base + 1;
+    }
     fp -> cnt--;
 
 
