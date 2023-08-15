@@ -1,6 +1,7 @@
 section .text
 global pangram
 pangram:
+	push rbx
 	xor rbx, rbx; using first 25 bits as a hashmap
 	xor rax, rax; result stored in rax at the end + some computations
 	xor rcx, rcx; 2 jobs, check result and bit masking
@@ -11,7 +12,7 @@ pangram:
 
 uppercheck: ;; check for uppercase characters
 	cmp byte [rsi], 65;
-	jl check
+	jl not_an_alphabet
 
 	cmp byte [rsi], 90;
 	jg lowercheck
@@ -26,10 +27,10 @@ uppercheck: ;; check for uppercase characters
 
 lowercheck: ;; check for lowercase characters
 	cmp byte [rsi], 97;
-	jl check
+	jl not_an_alphabet
 
 	cmp byte [rsi], 122;
-	jg check
+	jg not_an_alphabet
 
 	lodsb; store character eg 'a' in al from [rsi] and inc rsi
 	sub al, 0x61; between 97-122; map to 0-25	
@@ -38,6 +39,10 @@ lowercheck: ;; check for lowercase characters
 	inc rcx; put 1 in rcx - this will be our bitmask to the pangram 'hash table'
 	
 	jmp bitmask
+
+not_an_alphabet: ; increment rsi since not a char
+	lodsb
+	
 
 check:
 	cmp byte [rsi], 0x00; end of string reached
@@ -54,6 +59,7 @@ result:
 	jmp done
 
 done:
+	pop rbx
 	ret
 
 bitmask:
