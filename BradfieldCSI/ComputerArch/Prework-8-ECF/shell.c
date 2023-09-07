@@ -5,6 +5,8 @@
 #include<errno.h>
 #include<unistd.h>
 #include<sys/types.h>
+#include<sys/wait.h>
+#include<signal.h>
 
 #define MAXINPUT 50 /* Last \0 */
 #define MAXARGS 4 /* Last NULL */
@@ -12,38 +14,69 @@
 #define FORKERRMSG "fork error"
 #define COMMANDERRMSG "command does not exist"
 #define SHELLPROFILE "./.shellprofile"
+#define SLEEPCOMMAND "sleep"
 
 char *testCommand = "pecho";
 char *testArgv[] = {"my name is yuvi", "5"};
 
 pid_t Fork(char *message);
 int Execvp(char *args[], char *errmsg);
-void parseArgs(char *s, char *args[]);
+struct token parseArgs(char *s, char *args[]);
 int builtin(char *args[]);
 void alias(char *args[]);
 void aliasPrintAll(char *args[]);
+void sigintHandler(int sig);
+char *getOperator(char *s);
+int continueExec(char *operator, int exitStatus);
+
+struct token { /* Call to parseArgs always returns a token */
+    char *sNext;
+    char *operator;
+};
 
 int main() {
     char *s = NULL, *check = NULL;
     char input[MAXINPUT];
     char *args[MAXARGS];
+    int status, exitStatus;
+    struct token token = {
+        "\0",
+        "\0"
+    };
+
+    signal(SIGINT, sigintHandler); /* Installing SIGINT handler */
 
     do {
+
         printf(SHELLSYMBOL);
-        s = fgets(input, MAXINPUT, stdin);
+
+        if (*token.sNext != '\0' && continueExec(token.operator, exitStatus)) { /* If operators were used, continue execution based on exit status */
+            s = token.sNext;
+        } else {
+            s = fgets(input, MAXINPUT, stdin);
+        }
+
         if (s) {
-            parseArgs(s, args);
+            token = parseArgs(s, args); /* parseArg will always return a token depending on operators used in expression */
             if (!builtin(args)) {
                 pid_t pid = Fork(FORKERRMSG);
                 if (pid == 0) {
                     Execvp(args, COMMANDERRMSG);
                 }
+                
+                while (waitpid(pid, &status,0) > 0);  /* Reaping child process and tracking last exitStatus*/
+                if (WIFEXITED(status)) {
+                    exitStatus = WEXITSTATUS(status);
+                    // printf("\n exitStatus was %d", exitStatus);
+                }
             }
         }
-        if (s && !strchr(s, '\n')) { /* If newline not found, print first MAX chars and flush remaining */
+
+        if (s && !strchr(s, '\n')) { /* If newline not found, print first MAX chars and flush remaining - why was this condition written (?)*/
             while ((s = fgets(input, MAXINPUT, stdin)) && !strchr(s, '\n'));
             printf("\n");
         }
+    
     } while(s != NULL);
     
 
@@ -77,13 +110,18 @@ int Execvp(char *args[], char *errmsg) {
 }
 
 /* Parse args from input string */
-void parseArgs(char *s, char *args[]) {
+struct token parseArgs(char *s, char *args[]) {
     int argIdx = 0;
+    char *operator; /* To grab operators like && || */
+    struct token token = { 
+        "\0",
+        "\0"
+    };
 
     for(;*s==' ';s++) ; /* Skip initial spaces */
 
     char *cur = s;
-    while (*s != '\0') {
+    while (*s != '\0' && *(operator = getOperator(s)) == '\0') {
 
         while (*++cur != ' ' && *cur != '\n' && *cur != '\0'); /* Find delimiter */
 
@@ -96,7 +134,31 @@ void parseArgs(char *s, char *args[]) {
 
         s = cur;
     }
+
+    if (*operator != '\0') { /* If stopped parsing due to operator, return a token containing operator and start of next string */
+        token = (struct token) {
+            s + strlen(operator), /* Might have additional spaces at the start, they will be handled by next call to parseArgs */
+            operator,
+        };
+    }
+
     args[argIdx] = NULL;
+
+    return token;
+}
+
+char *getOperator(char *s) {
+    char *operator = "\0";
+    if ((*s == '&' && *(s+1) == '&' && *(s+2) == ' ') || (*s == '|' && *(s+1) == '|' && *(s+2) == ' ')) {
+        operator = (char *)malloc(3 * sizeof(char));
+        strncpy(operator, s, 2);
+        operator[2] = '\0';
+    } else if ((*s == '|' && *(s+1) == ' ') || (*s == '&' && *(s+1) == ' ')) {
+        operator = (char *)malloc(2 * sizeof(char));
+        strncpy(operator, s, 1);
+        operator[1] = '\0';
+    }
+    return operator;
 }
 
 // cases ls a b c\0
@@ -111,6 +173,7 @@ int builtin(char *args[]) {
         alias(args);
         returnStatus = 1;
     } else if (strcmp("exit", args[0]) == 0) {
+        printf("\n%sIf this is to end in fire, we should all burn together%s\n", SHELLSYMBOL, SHELLSYMBOL);
         exit(0);
     }
 
@@ -204,4 +267,19 @@ void aliasPrintAll(char *args[]) {
         fputc(curChar, stdout);
     }
     return;
+}
+
+void sigintHandler(int sig) {
+    printf("\n Caught SIGINT!");
+    return;
+}
+
+/* Determine whether to continue execution or not depending on exitStatus and operator */
+int continueExec(char *operator, int exitStatus) {
+    if (strcmp(operator, "&&") == 0) {
+        return exitStatus == 0;
+    } else if (strcmp(operator, "||") == 0) {
+        return exitStatus != 0;
+    }
+    return 0; /* Unknown operator */
 }
