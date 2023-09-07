@@ -26,6 +26,7 @@ int builtin(char *args[]);
 void alias(char *args[]);
 void aliasPrintAll(char *args[]);
 void sigintHandler(int sig);
+void sigtstpHandler(int sig);
 char *getOperator(char *s);
 int continueExec(char *operator, int exitStatus);
 
@@ -44,7 +45,8 @@ int main() {
         "\0"
     };
 
-    signal(SIGINT, sigintHandler); /* Installing SIGINT handler */
+    signal(SIGINT, sigintHandler); /* Installing SIGINT handler for background job */
+    signal(SIGTSTP, sigtstpHandler); /* Installing SIGTSTP handler for background job */
 
     do {
 
@@ -61,13 +63,18 @@ int main() {
             if (!builtin(args)) {
                 pid_t pid = Fork(FORKERRMSG);
                 if (pid == 0) {
+                    if (*token.operator == '&') { /* If background process, separate pgid continue execution even in case of signals like SIGINT to foreground proc */
+                        setpgid(0,0);
+                    }
                     Execvp(args, COMMANDERRMSG);
                 }
                 
-                while (waitpid(pid, &status,0) > 0);  /* Reaping child process and tracking last exitStatus*/
-                if (WIFEXITED(status)) {
-                    exitStatus = WEXITSTATUS(status);
-                    // printf("\n exitStatus was %d", exitStatus);
+                if (*token.operator != '&' ) { /* Don't wait on background processes */
+                    while (waitpid(pid, &status,0) > 0);  /* Reaping child process and tracking last exitStatus*/
+                    if (WIFEXITED(status)) {
+                        exitStatus = WEXITSTATUS(status);
+                        // printf("\n exitStatus was %d", exitStatus);
+                    }
                 }
             }
         }
@@ -161,10 +168,6 @@ char *getOperator(char *s) {
     return operator;
 }
 
-// cases ls a b c\0
-// Idx = 0, cur = s = 'l', s != 0, cur skipped to idx 2, newArg[2+1], strnCpy(newArg, s, 2) i.e [l,s], newArg[2] = '\0', args[0++] = newarg;, cur = 3, s = 3
-//  s = 3, cur skipped to 4, newArg[1+1], strncpy(newArg, s, 1), newArg[1] = '\0', args[1++] = 'a', args[2] =  NULL
-
 /* Execute and return 1 if builtin, 0 otherwise */
 int builtin(char *args[]) {
     int returnStatus = 0;
@@ -215,7 +218,8 @@ void alias(char *args[]) {
             continue;
         }
         
-        /* handling arguments other than -p --------INCOMPLETE --------------------------------------------------------------------------- */
+        /* For handling arguments other than -p */
+        /* ------------------------------------------------------INCOMPLETE --------------------------------------------------------------------------- */
         if((valueOffsetArg = strrchr(curStr, '=')) != NULL) { /* If assignment statement found, search in file and replace */
             f = fopen(SHELLPROFILE, "r+");
             curChar = '\0';
@@ -249,7 +253,7 @@ void alias(char *args[]) {
 
         }
 
-        /* handling arguments other than -p --------INCOMPLETE --------------------------------------------------------------------------- */
+        /* ------------------------------------------------------INCOMPLETE --------------------------------------------------------------------------- */
 
     }
 
@@ -274,12 +278,19 @@ void sigintHandler(int sig) {
     return;
 }
 
+void sigtstpHandler(int sig) {
+    printf("\n Caught SIGTSTP!");
+    exit(0);
+}
+
 /* Determine whether to continue execution or not depending on exitStatus and operator */
 int continueExec(char *operator, int exitStatus) {
     if (strcmp(operator, "&&") == 0) {
         return exitStatus == 0;
     } else if (strcmp(operator, "||") == 0) {
         return exitStatus != 0;
+    } else if (strcmp(operator, "&") == 0) {
+        return 1;
     }
     return 0; /* Unknown operator */
 }
