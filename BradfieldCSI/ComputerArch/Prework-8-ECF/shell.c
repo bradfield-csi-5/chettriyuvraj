@@ -27,6 +27,7 @@ void alias(char *args[]);
 void aliasPrintAll(char *args[]);
 void sigintHandler(int sig);
 void sigtstpHandler(int sig);
+void sigChldHandler(int sig);
 char *getOperator(char *s);
 int continueExec(char *operator, int exitStatus);
 
@@ -34,6 +35,8 @@ struct token { /* Call to parseArgs always returns a token */
     char *sNext;
     char *operator;
 };
+
+int shellPid;
 
 int main() {
     char *s = NULL, *check = NULL;
@@ -44,9 +47,14 @@ int main() {
         "\0",
         "\0"
     };
+    sigset_t mask, prevMask;
+    shellPid = getpid();
+    
 
-    signal(SIGINT, sigintHandler); /* Installing SIGINT handler for background job */
-    signal(SIGTSTP, sigtstpHandler); /* Installing SIGTSTP handler for background job */
+    signal(SIGINT, sigintHandler); /* Installing SIGINT handler  */
+    signal(SIGTSTP, sigtstpHandler); /* Installing SIGTSTP handler */
+
+
 
     do {
 
@@ -60,21 +68,28 @@ int main() {
 
         if (s) {
             token = parseArgs(s, args); /* parseArg will always return a token depending on operators used in expression */
+            signal(SIGTTOU, SIG_IGN);
             if (!builtin(args)) {
                 pid_t pid = Fork(FORKERRMSG);
                 if (pid == 0) {
-                    if (*token.operator == '&') { /* If background process, separate pgid continue execution even in case of signals like SIGINT to foreground proc */
-                        setpgid(0,0);
+                    pid_t childPid = getpid();
+                    setpgid(childPid, childPid); /* We want to implement job control, so we will create separate pgid for each process */
+                    if (*token.operator != '&' ) {
+                        tcsetpgrp(STDIN_FILENO, childPid);
                     }
                     Execvp(args, COMMANDERRMSG);
                 }
+
+                
+                
+                
                 
                 if (*token.operator != '&' ) { /* Don't wait on background processes */
-                    while (waitpid(pid, &status,0) > 0);  /* Reaping child process and tracking last exitStatus*/
+                    while (waitpid(pid, &status, 0) > 0);  /* Reaping child process and tracking last exitStatus*/
                     if (WIFEXITED(status)) {
                         exitStatus = WEXITSTATUS(status);
-                        // printf("\n exitStatus was %d", exitStatus);
                     }
+                    tcsetpgrp(STDIN_FILENO, getpgid(shellPid));
                 }
             }
         }
@@ -279,9 +294,11 @@ void sigintHandler(int sig) {
 }
 
 void sigtstpHandler(int sig) {
-    printf("\n Caught SIGTSTP!");
+    printf("\n Caught SIGTSTP - setting controlling terminal to shell");
+    tcsetpgrp(STDIN_FILENO, getpgid(shellPid));
     exit(0);
 }
+
 
 /* Determine whether to continue execution or not depending on exitStatus and operator */
 int continueExec(char *operator, int exitStatus) {
