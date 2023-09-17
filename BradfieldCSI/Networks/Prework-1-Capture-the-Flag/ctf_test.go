@@ -103,7 +103,7 @@ func TestParseTCP(t *testing.T) {
 	}
 }
 
-func TestParseHTTPMessage(t *testing.T) {
+func TestParseHTTP(t *testing.T) {
 	data := []struct {
 		data []byte
 		want HTTPMessage
@@ -123,7 +123,7 @@ func TestParseHTTPMessage(t *testing.T) {
 	}
 
 	for _, rawpacket := range data {
-		got := ParseHTTPMessage(rawpacket.data)
+		got := ParseHTTP(rawpacket.data)
 		want := rawpacket.want
 
 		if !bytes.Equal(got.Title, want.Title) || !bytes.Equal(got.Headers, want.Headers) || !bytes.Equal(got.Body, want.Body) {

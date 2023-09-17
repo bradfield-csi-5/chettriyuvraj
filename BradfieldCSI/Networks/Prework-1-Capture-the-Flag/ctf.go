@@ -55,7 +55,7 @@ func main() {
 			hashMap[tcpPacket.SequenceNo] = true
 		}
 	}
-	httpResponseBody := ParseHTTPMessage(httpResponse).Body
+	httpResponseBody := ParseHTTP(httpResponse).Body
 	writeFile, err := os.OpenFile(writeFile, os.O_RDWR|os.O_CREATE, 0777)
 	_, err = writeFile.Write(httpResponseBody)
 	if err != nil {
@@ -233,7 +233,7 @@ func ParseTCP(data []byte) TCPPacket {
  * Maintains an offset and parses different parts of HTTP message
  **/
 
-func ParseHTTPMessage(data []byte) HTTPMessage {
+func ParseHTTP(data []byte) HTTPMessage {
 	request := HTTPMessage{}
 	title := []byte{}
 	headers := []byte{}
