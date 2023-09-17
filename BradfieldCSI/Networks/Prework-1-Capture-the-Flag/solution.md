@@ -51,3 +51,13 @@ packet data starts below.
     - Define a function to parse ethernet frame and its input/output
     - Directly check EtherType tag, i.e 12th and 13th byte, since we know its an ethernet frame, let's simply check 12th byte
     - If 0x81, else
+
+
+## Conclusion
+
+- Didn't really write down how I solved rest of the problem but some observations are as follows
+- Followed TDD, had to get correct results using wireshark first
+- Used Wireshark as a general guide to help me in the right direction
+- Have ignored certain things at times Eg CRC, options section in packets, because of the fact that I saw the data beforehand in Wireshark
+- Only checked out the solution on the website in glimpses
+- Slight inconsistency in how I've used structs eg. TPID in Ethernet Frame could have been uint16 instead of []byte
