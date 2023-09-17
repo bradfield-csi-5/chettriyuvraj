@@ -62,3 +62,4 @@ packet data starts below.
 - Only checked out the solution on the website in glimpses
 - Slight inconsistency in how I've used structs eg. TPID in Ethernet Frame could have been uint16 instead of []byte
 - Also _PacketRecords_ have been parsed ugly-ly, would do it a little cleaner ideally
+- Should have used methods instead of functions, would probably also have simplified the tests which mostly seem to be doing the same thing
