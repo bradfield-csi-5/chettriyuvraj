@@ -12,17 +12,25 @@ import (
 const captureFile, pcapHeaderLength, writeFile = "./net.cap", 24, "img.jpg"
 const cols = 4
 
+/**
+ * Unwrap pcap packets layer by layer and get HTTP image data
+ *
+ * Parses pcap header
+ * Parses packet records
+ * Grabs server IP, isolates server packets, sorts them by sequence number, grab data from TCP packets with unique sequence number
+ * Write data to file
+ **/
+
 func main() {
 	readFile, err := os.Open(captureFile)
 	if err != nil {
 		log.Fatalf("error in opening file %v", err)
 	}
 
-	header, err := parsePcapHeader(file)
+	header, err := parsePcapHeader(readFile)
 	if err != nil {
 		log.Fatalf("Error in parsing pcap header %v", err)
 	}
-
 	fmt.Println(header)
 
 	packetRecords, err := parsePacketRecords(readFile)
@@ -32,41 +40,26 @@ func main() {
 
 	/* Sort */
 	serverIP := ParseIPv4(ParseEthernet(packetRecords[0].Data).Data).DestIP
-	serverTCPPackets := filterTCPBySourceIP(packetRecords[1:], serverIP) /* Skip SYN */
-	fmt.Println(len(serverTCPPackets))
+	serverTCPPackets := filterTCPBySourceIP(packetRecords[0:], serverIP)
 	sort.Slice(serverTCPPackets, func(i, j int) bool {
 		return serverTCPPackets[i].SequenceNo < serverTCPPackets[j].SequenceNo
 	})
 
-	/* Remove dups */
+	/* Remove dups, grab data and write data */
 	hashMap := make(map[uint32]bool)
-	uniqueServerTCPPackets := []TCPPacket{}
+	httpResponse := []byte{}
 	for _, tcpPacket := range serverTCPPackets {
 		_, exists := hashMap[tcpPacket.SequenceNo]
 		if !exists && tcpPacket.Flags != 0x12 { /* Ignore SYN, ACK packet */
-			uniqueServerTCPPackets = append(uniqueServerTCPPackets, tcpPacket)
+			httpResponse = append(httpResponse, tcpPacket.Data...)
 			hashMap[tcpPacket.SequenceNo] = true
 		}
 	}
-	serverTCPPackets = uniqueServerTCPPackets
-
-	fmt.Println(len(serverTCPPackets))
+	httpResponseBody := ParseHTTPMessage(httpResponse).Body
 	writeFile, err := os.OpenFile(writeFile, os.O_RDWR|os.O_CREATE, 0777)
+	_, err = writeFile.Write(httpResponseBody)
 	if err != nil {
 		log.Fatalf("error in opening file to write to %v", err)
-	}
-
-	/* Ignore Title and Headers when HTTP response starts */
-	httpResponseStartPacket := ParseHTTPRequest(serverTCPPackets[0].Data)
-	serverTCPPackets[0].Data = httpResponseStartPacket.Body
-
-	for _, tcpPacket := range serverTCPPackets {
-		if len(tcpPacket.Data) > 0 {
-			_, err := writeFile.Write(tcpPacket.Data)
-			if err != nil {
-				log.Fatalf("error in opening file to write to %v", err)
-			}
-		}
 	}
 }
 
@@ -230,8 +223,18 @@ func ParseTCP(data []byte) TCPPacket {
 	return packet
 }
 
-func ParseHTTPRequest(data []byte) HTTPRequest {
-	request := HTTPRequest{}
+/**
+ * Parses HTTP Messages, both requests and responses
+ *
+ * @param byte array containing TCP payload
+ * @return HTTPMessage
+ *
+ * Relies on \n\r between parts of HTTP message to parse it
+ * Maintains an offset and parses different parts of HTTP message
+ **/
+
+func ParseHTTPMessage(data []byte) HTTPMessage {
+	request := HTTPMessage{}
 	title := []byte{}
 	headers := []byte{}
 	body := []byte{}
