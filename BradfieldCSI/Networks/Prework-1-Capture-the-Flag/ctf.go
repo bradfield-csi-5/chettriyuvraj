@@ -27,35 +27,9 @@ func main() {
 		log.Fatalf("error in opening file %v", err)
 	}
 
-	header, err := parsePcapHeader(readFile)
-	if err != nil {
-		log.Fatalf("Error in parsing pcap header %v", err)
-	}
-	fmt.Println(header)
-
-	packetRecords, err := parsePacketRecords(readFile)
-	if err != nil {
-		log.Fatalf("Error in parsing packet records %v", err)
-	}
-
-	/* Sort */
-	serverIP := ParseIPv4(ParseEthernet(packetRecords[0].Data).Data).DestIP
-	serverTCPPackets := filterTCPBySourceIP(packetRecords[0:], serverIP)
-	sort.Slice(serverTCPPackets, func(i, j int) bool {
-		return serverTCPPackets[i].SequenceNo < serverTCPPackets[j].SequenceNo
-	})
-
-	/* Remove dups, grab data and write data */
-	hashMap := make(map[uint32]bool)
-	httpResponse := []byte{}
-	for _, tcpPacket := range serverTCPPackets {
-		_, exists := hashMap[tcpPacket.SequenceNo]
-		if !exists && tcpPacket.Flags != 0x12 { /* Ignore SYN, ACK packet */
-			httpResponse = append(httpResponse, tcpPacket.Data...)
-			hashMap[tcpPacket.SequenceNo] = true
-		}
-	}
+	httpResponse, err := Parse(readFile)
 	httpResponseBody := ParseHTTP(httpResponse).Body
+
 	writeFile, err := os.OpenFile(writeFile, os.O_RDWR|os.O_CREATE, 0777)
 	_, err = writeFile.Write(httpResponseBody)
 	if err != nil {
@@ -192,7 +166,6 @@ func ParseIPv4(data []byte) IPv4Packet {
 	packet.HeaderChecksum = binary.BigEndian.Uint16(data[10:12])        /* bytes 10,11 */
 	packet.SourceIP = binary.BigEndian.Uint32(data[12:16])              /* bytes 12-15 */
 	packet.DestIP = binary.BigEndian.Uint32(data[16:20])                /* bytes 16-19 */
-	// packet.Data = data[packet.IHL*4 : packet.TotalLen]
 	packet.Data = data[packet.IHL*4:]
 	return packet
 }
@@ -266,21 +239,78 @@ func ParseHTTP(data []byte) HTTPMessage {
 }
 
 /**
- * Takes Packet Records, returns TCP Packets filtered by Source IP
+ * Parses raw data from file and unwraps it to return HTTP Response
  *
- * @param slice of packet records
- * @param source ip
- * @return slice of TCP Packets
+ * @param file pointer containing raw binary data
+ * @return byte slice containing http response data
+ *
+ * Parses raw data from file, unwraps it layer by layer
+ * Sorts TCP packets by sequence number, finally grabs ordered http responses from TCP packets and returns them
  **/
 
-func filterTCPBySourceIP(packetRecords []PacketRecord, sourceIP uint32) []TCPPacket {
-	filteredTCPPackets := []TCPPacket{}
-	for _, packetRecord := range packetRecords {
-		ipPacket := ParseIPv4(ParseEthernet(packetRecord.Data).Data)
-		if ipPacket.SourceIP == sourceIP {
-			tcpPacket := ParseTCP(ipPacket.Data)
-			filteredTCPPackets = append(filteredTCPPackets, tcpPacket)
+func Parse(file *os.File) ([]byte, error) {
+	tcpPackets := []TCPPacket{}
+	headerBuf := make([]byte, 16)
+	sequenceNoMap := make(map[uint32]bool)
+	httpResponse := []byte{}
+	serverIP := uint32(0)
+
+	_, err := file.Seek(pcapHeaderLength, os.SEEK_SET)
+	if err != nil {
+		return nil, fmt.Errorf("Error while seeking %v", err)
+	}
+
+	for {
+		_, err := file.Read(headerBuf)
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, err
+		}
+
+		packetRecord := ParsePacketRecordHeader(headerBuf)
+		packetRecordData := make([]byte, packetRecord.CapturedLen)
+		_, err = file.Read(packetRecordData)
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, err
+		}
+		packetRecord.Data = packetRecordData
+
+		ethernetFrame := ParseEthernet(packetRecord.Data)
+		ipDatagram := ParseIPv4(ethernetFrame.Data)
+		if serverIP == 0 {
+			serverIP = ipDatagram.DestIP
+		}
+
+		if ipDatagram.SourceIP == serverIP {
+			tcpPacket := ParseTCP(ipDatagram.Data)
+			_, exists := sequenceNoMap[tcpPacket.SequenceNo]
+			if !exists && tcpPacket.Flags != 0x12 { /* Ignore SYN, ACK packet */
+				tcpPackets = append(tcpPackets, tcpPacket)
+				sequenceNoMap[tcpPacket.SequenceNo] = true
+			}
 		}
 	}
-	return filteredTCPPackets
+
+	sort.Slice(tcpPackets, func(i, j int) bool {
+		return tcpPackets[i].SequenceNo < tcpPackets[j].SequenceNo
+	})
+
+	for _, tcpPacket := range tcpPackets {
+		httpResponse = append(httpResponse, tcpPacket.Data...)
+	}
+
+	return httpResponse, nil
+}
+
+func ParsePacketRecordHeader(b []byte) PacketRecord {
+	timestamp := binary.LittleEndian.Uint32(b[0:4])
+	timestamp2 := binary.LittleEndian.Uint32(b[4:8])
+	capturedLen := binary.LittleEndian.Uint32(b[8:12])
+	originalLen := binary.LittleEndian.Uint32(b[12:16])
+	return PacketRecord{Timestamp: timestamp, Timestamp2: timestamp2, CapturedLen: capturedLen, OriginalLen: originalLen, Data: []byte{}}
 }
