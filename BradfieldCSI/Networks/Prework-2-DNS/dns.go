@@ -4,10 +4,42 @@ import (
 	"encoding/binary"
 	"log"
 	"os"
+	"strings"
 	"text/template"
 
 	"golang.org/x/sys/unix"
 )
+
+var qtypemap map[uint16]string = map[uint16]string{
+	1:  "A",
+	2:  "NS",
+	5:  "CNAME",
+	6:  "SOA",
+	15: "MX",
+	16: "TXT",
+}
+
+var classmap map[uint16]string = map[uint16]string{
+	1: "INET",
+}
+
+var opcodemap map[uint8]string = map[uint8]string{
+	0: "QUERY",
+	1: "IQUERY",
+	2: "STATUS",
+}
+
+var qrmap map[uint8]string = map[uint8]string{
+	0: "QUERY",
+	1: "REPLY",
+}
+
+var rcodemap map[uint8]string = map[uint8]string{
+	0: "NOERROR",
+	1: "FORMERROR",
+	2: "SERVFAIL",
+	3: "NXDOMAIN",
+}
 
 func main() {
 	DNSQuery := DNSMessage{
@@ -108,24 +140,24 @@ func (m DNSMessage) Print() {
 
 	templ := `; <<>> YuVi 0.0.0 <<>> {{range .Questions}} {{.Namestr}} {{end}}
 	;; Got answer:
-	;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: {{.Header.ID}}
-	;; flags: qr rd ra; QUERY: {{.Header.QCount}}, ANSWER: {{.Header.AnsCount}}, AUTHORITY: {{.Header.RRCount}}, ADDITIONAL: {{.Header.AddnlRRCount}}
+	;; ->>HEADER<<- opcode: {{ "OPCODE" | getFlag | OpcodeString }}, status: {{ "RCODE" | getFlag | RcodeString }}, id: {{.Header.ID}}
+	;; flags: {{getSetFlagsString}}; QUERY: {{.Header.QCount}}, ANSWER: {{.Header.AnsCount}}, AUTHORITY: {{.Header.RRCount}}, ADDITIONAL: {{.Header.AddnlRRCount}}
 
 	;; QUESTION SECTION:
 	{{range	.Questions}}
-	;{{.Namestr}}			{{.Type}}	{{.Class}}
+	;{{.Namestr}}			{{.Type | QtypeString}}	{{.Class | ClassString}}
 	{{end}}
 
 	;; ANSWER SECTION:
 	{{range .Answers}}
-	{{.Namestr}}			{{.Type}}	{{.Class}}	{{.TTL}}	{{.RDLength}}	{{.RData}}
+	{{.Namestr}}			{{.Type | QtypeString}}	{{.Class | ClassString}}	{{.TTL}}	{{.RDLength}}	{{.RData}}
 	{{end}}
 
 	;; Query time: undefined
-	;; SERVER: undefined
+	;; SERVER: 8.8.8.8
 	;; WHEN: undefined
-	;; MSG SIZE  rcvd: undefined`
-	templMessage, err := template.New("DNSMessage").Parse(templ)
+	;; MSG SIZE  rcvd: undefined` // TODO: Msg size, time, parse RDATA
+	templMessage, err := template.New("DNSMessage").Funcs(template.FuncMap{"ClassString": ClassString, "QtypeString": QtypeString, "getFlag": m.getFlag, "OpcodeString": OpcodeString, "QrString": QrString, "RcodeString": RcodeString, "getSetFlagsString": m.getSetFlagsString}).Parse(templ)
 	if err != nil {
 		log.Fatalf("Error while parsing DNS Message template %v", err)
 	}
@@ -134,4 +166,54 @@ func (m DNSMessage) Print() {
 	if err != nil {
 		log.Fatalf("Error while executing DNS Message template %v", err)
 	}
+}
+
+func (m DNSMessage) getFlagMap() map[string]uint8 {
+	flags := m.Header.Flags
+	return map[string]uint8{
+		"QR":     uint8((flags & 0b1000000000000000) >> 15),
+		"OPCODE": uint8((flags & 0b0111100000000000) >> 11),
+		"AA":     uint8((flags & 0b0000010000000000) >> 10),
+		"TC":     uint8((flags & 0b0000001000000000) >> 9),
+		"RD":     uint8((flags & 0b0000000100000000) >> 8),
+		"RA":     uint8((flags & 0b0000000010000000) >> 7),
+		"Z":      uint8((flags & 0b0000000001110000) >> 4),
+		"RCODE":  uint8((flags & 0b0000000000001111)),
+	}
+}
+
+func (m DNSMessage) getFlag(f string) uint8 {
+	flagMap := m.getFlagMap()
+	return flagMap[f]
+}
+
+func (m DNSMessage) getSetFlagsString() string {
+	flagMap := m.getFlagMap()
+	res := []string{}
+	for key := range flagMap {
+		if key != "OPCODE" && key != "RCODE" && flagMap[key] > 0 {
+			res = append(res, key)
+		}
+	}
+	return strings.Join(res, " ")
+}
+
+func ClassString(class uint16) string {
+	return classmap[class]
+}
+
+func QtypeString(qtype uint16) string {
+	return qtypemap[qtype]
+}
+
+func OpcodeString(opcode uint8) string {
+	return opcodemap[opcode]
+}
+
+func QrString(qr uint8) string {
+	return qrmap[qr]
+}
+
+func RcodeString(rcode uint8) string {
+	return rcodemap[rcode]
 }
