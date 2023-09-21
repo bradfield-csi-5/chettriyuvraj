@@ -2,19 +2,23 @@ package main
 
 import (
 	"encoding/binary"
-	"fmt"
 	"log"
+	"os"
+	"text/template"
 
 	"golang.org/x/sys/unix"
 )
 
 func main() {
 	DNSQuery := DNSMessage{
-		Header:    DNSHeader{ID: 0x0001, Flags: 0x0100, QCount: 0x0001, AnsCount: 0x0000, RRCount: 0x0000, AddnlRRCount: 0x0000},
-		Questions: []DNSQuestion{sampleDNSQuestion()},
+		Header: DNSHeader{ID: 0x0001, Flags: 0x0000, QCount: 0x0001, AnsCount: 0x0000, RRCount: 0x0000, AddnlRRCount: 0x0000},
+		Questions: []DNSQuestion{
+			{Name: []byte{0x07, 0x65, 0x78, 0x61, 0x6d, 0x70, 0x6c, 0x65, 0x03, 0x63, 0x6f, 0x6d, 0x00}, Type: 0x0002, Class: 0x0001},
+		},
 	}
+
 	DNSResponse := DNSQuery.send()
-	fmt.Printf("\n%x", DNSResponse)
+	DNSResponse.Print()
 }
 
 func NewDNSMessage(ID uint16, recursive bool, questions []DNSQuestion, answers []DNSAnswer) (DNSMessage, error) { // accomodate remaining arguments
@@ -52,23 +56,23 @@ func (q DNSMessage) send() DNSMessage {
 	return ParseDNSResponse(rawDNSResponse)
 }
 
-func (q DNSMessage) encode() []byte {
+func (m DNSMessage) encode() []byte {
 	res := []byte{}
 
-	res = binary.BigEndian.AppendUint16(res, q.Header.ID)
-	res = binary.BigEndian.AppendUint16(res, q.Header.Flags)
-	res = binary.BigEndian.AppendUint16(res, q.Header.QCount)
-	res = binary.BigEndian.AppendUint16(res, q.Header.AnsCount)
-	res = binary.BigEndian.AppendUint16(res, q.Header.RRCount)
-	res = binary.BigEndian.AppendUint16(res, q.Header.AddnlRRCount)
+	res = binary.BigEndian.AppendUint16(res, m.Header.ID)
+	res = binary.BigEndian.AppendUint16(res, m.Header.Flags)
+	res = binary.BigEndian.AppendUint16(res, m.Header.QCount)
+	res = binary.BigEndian.AppendUint16(res, m.Header.AnsCount)
+	res = binary.BigEndian.AppendUint16(res, m.Header.RRCount)
+	res = binary.BigEndian.AppendUint16(res, m.Header.AddnlRRCount)
 
-	for _, question := range q.Questions {
+	for _, question := range m.Questions {
 		res = append(res, question.Name...)
 		res = binary.BigEndian.AppendUint16(res, question.Type)
 		res = binary.BigEndian.AppendUint16(res, question.Class)
 	}
 
-	for _, answer := range q.Answers {
+	for _, answer := range m.Answers {
 		res = append(res, answer.Name...)
 		res = binary.BigEndian.AppendUint16(res, answer.Type)
 		res = binary.BigEndian.AppendUint16(res, answer.Class)
@@ -80,4 +84,54 @@ func (q DNSMessage) encode() []byte {
 	// extend to accomodate remaining fields
 
 	return res
+}
+
+func (m DNSMessage) Print() {
+	// ; <<>> DiG 9.10.6 <<>> example.com
+	// ;; global options: +cmd
+	// ;; Got answer:
+	// ;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 5690
+	// ;; flags: qr rd ra; QUERY: 1, ANSWER: 1, AUTHORITY: 0, ADDITIONAL: 1
+
+	// ;; OPT PSEUDOSECTION:
+	// ; EDNS: version: 0, flags:; udp: 4096
+	// ;; QUESTION SECTION:
+	// ;example.com.			IN	A
+
+	// ;; ANSWER SECTION:
+	// example.com.		77760	IN	A	93.184.216.34
+
+	// ;; Query time: 7 msec
+	// ;; SERVER: fe80::1%15#53(fe80::1%15)
+	// ;; WHEN: Thu Sep 21 16:42:07 IST 2023
+	// ;; MSG SIZE  rcvd: 56
+
+	templ := `; <<>> YuVi 0.0.0 <<>> {{range .Questions}} {{.Namestr}} {{end}}
+	;; Got answer:
+	;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: {{.Header.ID}}
+	;; flags: qr rd ra; QUERY: {{.Header.QCount}}, ANSWER: {{.Header.AnsCount}}, AUTHORITY: {{.Header.RRCount}}, ADDITIONAL: {{.Header.AddnlRRCount}}
+
+	;; QUESTION SECTION:
+	{{range	.Questions}}
+	;{{.Namestr}}			{{.Type}}	{{.Class}}
+	{{end}}
+
+	;; ANSWER SECTION:
+	{{range .Answers}}
+	{{.Namestr}}			{{.Type}}	{{.Class}}	{{.TTL}}	{{.RDLength}}	{{.RData}}
+	{{end}}
+
+	;; Query time: undefined
+	;; SERVER: undefined
+	;; WHEN: undefined
+	;; MSG SIZE  rcvd: undefined`
+	templMessage, err := template.New("DNSMessage").Parse(templ)
+	if err != nil {
+		log.Fatalf("Error while parsing DNS Message template %v", err)
+	}
+
+	err = templMessage.Execute(os.Stdout, m)
+	if err != nil {
+		log.Fatalf("Error while executing DNS Message template %v", err)
+	}
 }

@@ -30,7 +30,7 @@ func TestDNSMessage(t *testing.T) {
 		for i := 0; i < len(got); i++ {
 			q1 := got[i]
 			q2 := want[i]
-			if !bytes.Equal(q1.Name, q2.Name) || q1.Type != q2.Type || q1.Class != q2.Class {
+			if !bytes.Equal(q1.Name, q2.Name) || q1.Type != q2.Type || q1.Class != q2.Class || q1.Namestr != q2.Namestr {
 				t.Errorf("Expected parsed question %q, got %q", want, got)
 			}
 		}
@@ -50,7 +50,7 @@ func TestDNSMessage(t *testing.T) {
 		for i := 0; i < len(got); i++ {
 			q1 := got[i]
 			q2 := want[i]
-			if !bytes.Equal(q1.Name, q2.Name) || q1.Type != q2.Type || q1.Class != q2.Class || q1.TTL != q2.TTL || q1.RDLength != q2.RDLength || !bytes.Equal(q1.RData, q2.RData) {
+			if !bytes.Equal(q1.Name, q2.Name) || q1.Type != q2.Type || q1.Class != q2.Class || q1.TTL != q2.TTL || q1.RDLength != q2.RDLength || !bytes.Equal(q1.RData, q2.RData) || q1.Namestr != q2.Namestr {
 				t.Errorf("Expected parsed answer %q, got %q", want, got)
 			}
 		}

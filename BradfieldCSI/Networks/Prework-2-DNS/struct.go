@@ -16,9 +16,10 @@ type DNSMessage struct {
 }
 
 type DNSQuestion struct {
-	Name  []byte
-	Type  uint16
-	Class uint16
+	Name    []byte
+	Type    uint16
+	Class   uint16
+	Namestr string /* Should have used a string - extended */
 }
 
 type DNSAnswer struct {
@@ -28,4 +29,5 @@ type DNSAnswer struct {
 	TTL      uint32
 	RDLength uint16
 	RData    []byte
+	Namestr  string /* Should have used a string - extended */
 }

@@ -28,6 +28,7 @@ func ParseDNSQuestions(b []byte, header DNSHeader) ([]DNSQuestion, int) {
 		question.Name, offset = ParseLabel(b, offset)
 		question.Type = binary.BigEndian.Uint16(b[offset : offset+2])
 		question.Class = binary.BigEndian.Uint16(b[offset+2 : offset+4])
+		question.Namestr = LabelToString(question.Name)
 		offset += 4
 
 		questions = append(questions, question)
@@ -41,7 +42,15 @@ func ParseDNSAnswers(b []byte, header DNSHeader, offset int) ([]DNSAnswer, int) 
 
 	for i := 0; i < int(header.AnsCount); i++ {
 		answer := DNSAnswer{}
-		answer.Name = b[offset : offset+2]
+		if b[offset]&0xc0 == 0xc0 {
+			labelOffset := ConvPointerToOffset(b, offset)
+			name, _ := ParseLabel(b, labelOffset)
+			answer.Name = b[offset : offset+2]
+			answer.Namestr = LabelToString(name)
+		} else {
+			answer.Name, offset = ParseLabel(b, offset)
+			answer.Namestr = LabelToString(answer.Name)
+		}
 		answer.Type = binary.BigEndian.Uint16(b[offset+2 : offset+4])
 		answer.Class = binary.BigEndian.Uint16(b[offset+4 : offset+6])
 		answer.TTL = binary.BigEndian.Uint32(b[offset+6 : offset+10])
@@ -66,13 +75,18 @@ func ParseLabel(b []byte, offset int) ([]byte, int) {
 	return res, offset
 }
 
-func ConvPointerToLabel(b []byte, offset int) ([]byte, int) {
-	/*****
-		if b[offset]&0xc0 == 0xc0 {
-		labelOffset := int(binary.BigEndian.Uint16(b[offset:offset+2]) & 0x3FFF)
-		answer.Name, _ = ParseLabel(b, labelOffset)
-		answer.Name, _ = ConvPointerToLabel(b, offset)
-	} ******/
+func ConvPointerToOffset(b []byte, offset int) int {
 	labelOffset := int(binary.BigEndian.Uint16(b[offset:offset+2]) & 0x3FFF)
-	return ParseLabel(b, labelOffset)
+	return labelOffset
+}
+
+func LabelToString(label []byte) string {
+	res := []byte{}
+	for offset := 0; label[offset] != 0x00; offset += int(label[offset]) + 1 {
+		if len(res) > 0 {
+			res = append(res, 0x2E)
+		}
+		res = append(res, label[offset+1:offset+int(label[offset])+1]...)
+	}
+	return string(res)
 }
