@@ -9,11 +9,6 @@ type DNSHeader struct {
 	AddnlRRCount uint16
 }
 
-type DNSQuery struct {
-	Header    DNSHeader
-	Questions []DNSQuestion
-}
-
 type DNSMessage struct {
 	Header    DNSHeader
 	Questions []DNSQuestion
@@ -35,6 +30,15 @@ type DNSAnswer struct {
 	RData    []byte
 }
 
+type EthernetFrame struct {
+	MACdest      []byte
+	MACsource    []byte
+	TPID         []byte
+	TPIDExtended []byte
+	Data         []byte
+	// CRC          []byte /* Not considering CRC for now */
+}
+
 type IPv4Packet struct {
 	Version        uint8
 	IHL            uint8
@@ -53,11 +57,10 @@ type IPv4Packet struct {
 	Data []byte
 }
 
-type EthernetFrame struct {
-	MACdest      []byte
-	MACsource    []byte
-	TPID         []byte
-	TPIDExtended []byte
-	Data         []byte
-	// CRC          []byte /* Not considering CRC for now */
+type UDPPacket struct {
+	SourcePort uint16
+	DestPort   uint16
+	Length     uint16
+	Checksum   uint16
+	Data       []byte
 }
