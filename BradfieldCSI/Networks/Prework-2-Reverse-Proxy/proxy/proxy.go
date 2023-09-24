@@ -7,41 +7,69 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const PORT1 = 7542
-const PORT2 = 7543
-const SERVERPORT = 17542
+const PROXYPORTCLIENT, SERVERPORT = 7542, 9000
+const NEWLINE, CARRIAGERETURN = 0x0a, 0x0d
 
-var ADDR [4]byte = [4]byte{0x7F, 0x00, 0x00, 0x01}
-
-type TCPSocket struct {
-	fd int
-}
+var LOOPBACK [4]byte = [4]byte{0x7F, 0x00, 0x00, 0x01}
 
 func main() {
-	clientSocket, err := NewTCPSocket(PORT1, ADDR)
+	clientSocket, _, err := ConnectToClient()
 	if err != nil {
-		log.Fatalf("socket error %v", err)
+		log.Fatalf("error connecting to client %v", err)
 	}
 
-	clientSocketNew, _, err := clientSocket.AcceptConn()
+	err = ForwardClientToServer(clientSocket)
 	if err != nil {
-		log.Fatalf("socket connect error %v", err)
+		log.Fatalf("error forwarding to server %v", err)
+	}
+}
+
+func ConnectToClient() (int, unix.Sockaddr, error) {
+	fmt.Println("Creating socket to connect to client...")
+	socket, err := unix.Socket(unix.AF_INET, unix.SOCK_STREAM, 0)
+	if err != nil {
+		return -1, nil, fmt.Errorf("error creating client socket %v", err)
 	}
 
-	serverSocket, err := NewTCPSocket(PORT2, ADDR)
+	sockaddr := &unix.SockaddrInet4{Port: PROXYPORTCLIENT, Addr: LOOPBACK}
+	err = unix.Bind(socket, sockaddr)
 	if err != nil {
-		log.Fatalf("socket error %v", err)
+		return -1, nil, fmt.Errorf("error binding socket %v", err)
 	}
 
-	fmt.Println("Connecting to server...")
-	err = unix.Connect(serverSocket.fd, &unix.SockaddrInet4{Port: SERVERPORT, Addr: ADDR})
+	fmt.Println("Listening...")
+	err = unix.Listen(socket, 1)
 	if err != nil {
-		log.Fatalf("error connecting to server %v", err)
+		return -1, nil, fmt.Errorf("error while listening %v", err)
 	}
 
+	nfd, nsa, err := unix.Accept(socket)
+	if err != nil {
+		return -1, nil, fmt.Errorf("error while accepting %v", err)
+	}
+	fmt.Println("Accepted...")
+
+	return nfd, nsa, err
+}
+
+func ForwardClientToServer(clientSocket int) error {
 	clientBuffer := make([]byte, 4096)
+
 	for {
-		n, _, err := unix.Recvfrom(clientSocketNew.fd, clientBuffer, 0)
+		fmt.Println("Creating socket to connect to server...")
+		serverSocket, err := unix.Socket(unix.AF_INET, unix.SOCK_STREAM, 0)
+		if err != nil {
+			return fmt.Errorf("error creating server socket %v", err)
+		}
+
+		sockaddr := &unix.SockaddrInet4{Addr: LOOPBACK}
+		err = unix.Bind(serverSocket, sockaddr)
+		if err != nil {
+			return fmt.Errorf("error binding socket %v", err)
+		}
+
+		fmt.Println("Receiving from client...")
+		n, _, err := unix.Recvfrom(clientSocket, clientBuffer, 0)
 		if err != nil {
 			log.Fatalf("error while receiving from client %v", err)
 		}
@@ -49,42 +77,23 @@ func main() {
 			break
 		}
 
+		fmt.Println("Connecting to server...")
+		err = unix.Connect(serverSocket, &unix.SockaddrInet4{Port: SERVERPORT, Addr: LOOPBACK})
+		if err != nil {
+			log.Fatalf("error connecting to server %v", err)
+		}
+
 		fmt.Printf("\nReceived %q, passing to server...", string(clientBuffer))
-		err = unix.Send(serverSocket.fd, clientBuffer, 0)
+		err = unix.Send(serverSocket, clientBuffer, 0)
 		if err != nil {
 			log.Fatalf("error while sending to server %v", err)
 		}
-		fmt.Printf("\nSuccessfully passed to server...")
+
+		fmt.Println("\nSuccessfully passed to server, closing connection...")
+		err = unix.Close(serverSocket)
+		if err != nil {
+			log.Fatalf("error while closing server socket %v", err)
+		}
 	}
-}
-
-func NewTCPSocket(PORT int, ADDR [4]byte) (TCPSocket, error) {
-	socket, err := unix.Socket(unix.AF_INET, unix.SOCK_STREAM, 0)
-	if err != nil {
-		return TCPSocket{}, fmt.Errorf("error creating socket %v", err)
-	}
-
-	sockaddr := &unix.SockaddrInet4{Port: PORT, Addr: ADDR}
-	err = unix.Bind(socket, sockaddr)
-	if err != nil {
-		return TCPSocket{}, fmt.Errorf("error binding socket %v", err)
-	}
-
-	return TCPSocket{fd: socket}, nil
-}
-
-func (socket *TCPSocket) AcceptConn() (TCPSocket, unix.Sockaddr, error) {
-	fmt.Println("Listening...")
-	err := unix.Listen(socket.fd, 1)
-	if err != nil {
-		return TCPSocket{}, nil, fmt.Errorf("error while listening %v", err)
-	}
-
-	nfd, nsa, err := unix.Accept(socket.fd)
-	if err != nil {
-		return TCPSocket{}, nil, fmt.Errorf("error while accepting %v", err)
-	}
-	fmt.Println("Accepted...")
-
-	return TCPSocket{fd: nfd}, nsa, err
+	return nil
 }
