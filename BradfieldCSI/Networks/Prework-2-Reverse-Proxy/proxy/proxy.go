@@ -16,7 +16,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const PROXYPORTCLIENT, SERVERPORT = 7542, 9000
+const PROXYPORTCLIENT, SERVERPORT = 7543, 9000
 const NEWLINE, CARRIAGERETURN = 0x0a, 0x0d
 
 const CACHEPATH = "./cache"
@@ -206,6 +206,36 @@ func ForwardClientToServer() {
 		err = unix.Close(serverSocket)
 		if err != nil {
 			errorChannel <- fmt.Errorf("error while closing server socket %v", err)
+		}
+
+		resp, err := http.ReadResponse(bufio.NewReader(bytes.NewReader(serverBuffer)), req)
+		respData := make([]byte, 4096)
+		cacheFile, err := os.OpenFile(filePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0777)
+		if err != nil {
+			errorChannel <- fmt.Errorf("error while opening cache file to write to %v", err)
+		}
+		for {
+			_, err := resp.Body.Read(respData)
+			fmt.Println(string(respData))
+			if err == io.EOF {
+				_, err = cacheFile.Write(respData)
+				if err != nil {
+					errorChannel <- fmt.Errorf("error while writing cache file %v", err)
+				}
+				break
+			}
+			if err != nil {
+				errorChannel <- fmt.Errorf("error while opening cache file to write to %v", err)
+			}
+
+			_, err = cacheFile.Write(respData)
+			if err != nil {
+				errorChannel <- fmt.Errorf("error while writing cache file %v", err)
+			}
+		}
+		err = cacheFile.Close()
+		if err != nil {
+			errorChannel <- fmt.Errorf("error while closing cache file to write to %v", err)
 		}
 
 		fmt.Println("Passing server response to client...")
