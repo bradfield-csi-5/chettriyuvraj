@@ -1,3 +1,5 @@
+// TODO: Failing json.decode on running proxy_tester.py
+
 package main
 
 import (
@@ -24,8 +26,10 @@ const MAXLISTENQUEUE = 3
 var cacheconf CacheConf = CacheConf{
 	ProxyCachePath: CACHEPATH,
 	Server: []Location{
+		{Path: "", ProxyPort: -1},  // always store in order of least to most specific
+		{Path: "/", ProxyPort: -1}, // always store in order of least to most specific
+		{Path: "/local", ProxyPort: -1},
 		{Path: "/proxy", ProxyPath: [4]byte{0x7F, 0x00, 0x00, 0x01}, ProxyPort: 9000},
-		{Path: "/local", ProxyPort: -1}, // always store in order of least to most specific
 	},
 }
 
@@ -115,6 +119,8 @@ func ForwardClientToServer() {
 
 			req, err := http.ReadRequest(bufio.NewReader(bytes.NewReader(clientData)))
 			for _, location := range cacheconf.Server {
+				fmt.Println(req.URL.Path)
+				fmt.Println(location.Path)
 				if strings.Contains(req.URL.Path, location.Path) {
 					matchLocation = location
 				}
@@ -125,19 +131,17 @@ func ForwardClientToServer() {
 				return
 			}
 
-			/* If location not configured for any proxy */
+			/* If location not configured for any proxy - return a simple file from cache folder, this is not a part of caching functionality, just simply reusing func to serve a file */
 
-			if matchLocation.ProxyPort == -1 { // no proxy - return a simple message
+			if matchLocation.ProxyPort == -1 {
 				fmt.Println("No proxy..")
-				response := sampleResponse("no proxy")
-				tempBuffer := bytes.NewBuffer(make([]byte, 4096))
-				err = response.Write(tempBuffer)
+				nonProxyData, err := checkCacheAndServe(CACHEPATH + "/test7")
 				if err != nil {
-					errorChannel <- fmt.Errorf("error while writing non proxy response to buffer %v", err)
+					errorChannel <- fmt.Errorf("error while serving non proxy response %v", err)
 					return
 				}
 
-				err = unix.Send(rwClientSocket, tempBuffer.Bytes(), 0)
+				err = unix.Send(rwClientSocket, nonProxyData, 0)
 				if err != nil {
 					errorChannel <- fmt.Errorf("error while sending non proxy server response to client %v", err)
 				}
@@ -147,7 +151,13 @@ func ForwardClientToServer() {
 
 			/* Check if data exists in cache */
 
-			cache := checkCacheAndServe(req)
+			basePath := path.Base(req.URL.Path)
+			filePath := CACHEPATH + "/" + basePath
+			cache, err := checkCacheAndServe(filePath)
+			if err != nil {
+				errorChannel <- fmt.Errorf("error while serving cache %v", err)
+				return
+			}
 			if cache != nil {
 				fmt.Println("Serving cache...")
 				err = unix.Send(rwClientSocket, cache, 0)
@@ -190,21 +200,17 @@ func handleErrors() {
 	}
 }
 
-func checkCacheAndServe(req *http.Request) []byte {
+func checkCacheAndServe(filePath string) ([]byte, error) {
 	fmt.Println("Checking cache...")
 
 	serverBuffer := make([]byte, 4096)
-	basePath := path.Base(req.URL.Path)
-	filePath := CACHEPATH + "/" + basePath
 	f, err := os.OpenFile(filePath, os.O_RDONLY, 0777)
 
 	if err != nil {
 		if os.IsNotExist(err) {
-			fmt.Println("No cache exists")
-			return nil
+			return nil, nil
 		}
-		errorChannel <- fmt.Errorf("error while opening cache file %v", err)
-		return nil
+		return nil, fmt.Errorf("error while opening cache file %v", err)
 	}
 
 	for {
@@ -214,8 +220,7 @@ func checkCacheAndServe(req *http.Request) []byte {
 			break
 		}
 		if err != nil {
-			errorChannel <- fmt.Errorf("error while writing cache to buffer %v", err)
-			return nil
+			return nil, fmt.Errorf("error while writing cache to buffer %v", err)
 		}
 	}
 
@@ -223,10 +228,10 @@ func checkCacheAndServe(req *http.Request) []byte {
 	tempBuffer := bytes.NewBuffer([]byte{})
 	err = response.Write(tempBuffer)
 	if err != nil {
-		errorChannel <- fmt.Errorf("error while writing cache to temp buffer %v", err)
-		return nil
+		return nil, fmt.Errorf("error while writing cache to temp buffer %v", err)
 	}
-	return tempBuffer.Bytes()
+
+	return tempBuffer.Bytes(), nil
 
 }
 
