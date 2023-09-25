@@ -1,25 +1,30 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"fmt"
+	"io/ioutil"
 	"log"
+	"net/http"
+	"strings"
 	"sync"
 
 	"golang.org/x/sys/unix"
 )
 
-const PROXYPORTCLIENT, SERVERPORT = 7542, 9000
+const PROXYPORTCLIENT, SERVERPORT = 7543, 9000
 const NEWLINE, CARRIAGERETURN = 0x0a, 0x0d
 
-// const CACHEPATH = "/cache"
+const CACHEPATH = "/cache"
 
-// var cacheconf CacheConf = CacheConf{
-// 	ProxyCachePath: CACHEPATH,
-// 	Server: []Location{
-// 		{Path: "/", ProxyPass: "localhost:7542"},
-// 		{Path: "/", ProxyPass: "localhost:7543"},
-// 	},
-// }
+var cacheconf CacheConf = CacheConf{
+	ProxyCachePath: CACHEPATH,
+	Server: []Location{
+		{Path: "/proxy", ProxyPath: [4]byte{0x7F, 0x00, 0x00, 0x01}, ProxyPort: 9000},
+		{Path: "/local", ProxyPort: -1}, // store in order of least to most specific
+	},
+}
 
 var LOOPBACK [4]byte = [4]byte{0x7F, 0x00, 0x00, 0x01}
 var clientSocketChannel chan int = make(chan int, 3)
@@ -80,6 +85,8 @@ func ForwardClientToServer() {
 
 	for rwClientSocket := range clientSocketChannel {
 
+		var matchLocation Location = Location{Path: "", ProxyPort: -1}
+
 		fmt.Println("Creating socket to connect to server...")
 		serverSocket, err := unix.Socket(unix.AF_INET, unix.SOCK_STREAM, 0)
 		if err != nil {
@@ -94,8 +101,46 @@ func ForwardClientToServer() {
 			continue
 		}
 
+		req, err := http.ReadRequest(bufio.NewReader(bytes.NewReader(clientBuffer)))
+		for _, location := range cacheconf.Server {
+			if strings.Contains(req.URL.Path, location.Path) { // location.Path stored in order of least to most specific
+				fmt.Println("match")
+				fmt.Println(location)
+				matchLocation = location
+			}
+		}
+
+		fmt.Println(matchLocation)
+
+		if matchLocation.Path == "" { // return 404
+			errorChannel <- fmt.Errorf("location not found on server %v", err)
+			continue
+		}
+
+		if matchLocation.ProxyPort == -1 { // no proxy
+			fmt.Println("No proxy..")
+			response := sampleResponse()
+			tempBuffer := bytes.NewBuffer(serverBuffer)
+			err = response.Write(tempBuffer)
+			if err != nil {
+				errorChannel <- fmt.Errorf("error while writing non proxy response to buffer %v", err)
+				continue
+			}
+
+			err = unix.Send(rwClientSocket, tempBuffer.Bytes(), 0)
+			if err != nil {
+				errorChannel <- fmt.Errorf("error while sending non proxy server response to client %v", err)
+			}
+
+			err = unix.Close(rwClientSocket)
+			if err != nil {
+				errorChannel <- fmt.Errorf("error while closing client non proxy rw socket %v", err)
+			}
+			continue
+		}
+
 		fmt.Println("Connecting to server...")
-		err = unix.Connect(serverSocket, &unix.SockaddrInet4{Port: SERVERPORT, Addr: LOOPBACK})
+		err = unix.Connect(serverSocket, &unix.SockaddrInet4{Port: matchLocation.ProxyPort, Addr: matchLocation.ProxyPath})
 		if err != nil {
 			errorChannel <- fmt.Errorf("error connecting to server %v", err)
 			continue
@@ -142,3 +187,22 @@ func handleErrors() {
 		fmt.Printf("non-terminating error %q", err)
 	}
 }
+
+func sampleResponse() *http.Response { // Giving error when sending to curl
+	t := &http.Response{
+		Status:        "200 OK",
+		StatusCode:    200,
+		Proto:         "HTTP/1.1",
+		ProtoMajor:    1,
+		ProtoMinor:    1,
+		Body:          ioutil.NopCloser(bytes.NewBufferString("test")),
+		ContentLength: 4,
+		Header:        make(http.Header, 0),
+	}
+	return t
+}
+
+// whenever a request comes in:
+// match it with the locations most specific
+// check if the file exists in cachePath directory, if yes return it back
+// otherwise route to server, save the data when it returns from the server to cache folder
