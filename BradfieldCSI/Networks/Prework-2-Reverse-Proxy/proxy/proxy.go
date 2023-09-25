@@ -4,19 +4,22 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
+	"os"
+	"path"
 	"strings"
 	"sync"
 
 	"golang.org/x/sys/unix"
 )
 
-const PROXYPORTCLIENT, SERVERPORT = 7543, 9000
+const PROXYPORTCLIENT, SERVERPORT = 7542, 9000
 const NEWLINE, CARRIAGERETURN = 0x0a, 0x0d
 
-const CACHEPATH = "/cache"
+const CACHEPATH = "./cache"
 
 var cacheconf CacheConf = CacheConf{
 	ProxyCachePath: CACHEPATH,
@@ -119,7 +122,7 @@ func ForwardClientToServer() {
 
 		if matchLocation.ProxyPort == -1 { // no proxy
 			fmt.Println("No proxy..")
-			response := sampleResponse()
+			response := sampleResponse("no proxy")
 			tempBuffer := bytes.NewBuffer(serverBuffer)
 			err = response.Write(tempBuffer)
 			if err != nil {
@@ -139,6 +142,44 @@ func ForwardClientToServer() {
 			continue
 		}
 
+		fmt.Println("Checking cache...")
+		basePath := path.Base(req.URL.Path)
+		filePath := CACHEPATH + "/" + basePath
+		fmt.Println(filePath)
+		f, err := os.OpenFile(filePath, os.O_RDONLY, 0777)
+		if err == nil {
+			fmt.Println("Serving cache...")
+			for {
+				_, err = f.Read(serverBuffer)
+				if err == io.EOF {
+					fmt.Println("Done writing cache to buffer...")
+					break
+				}
+				if err != nil {
+					errorChannel <- fmt.Errorf("error while writing cache to buffer %v", err)
+					break
+				}
+			}
+			if err == io.EOF || err == nil {
+
+				response := sampleResponse(string(serverBuffer))
+				tempBuffer := bytes.NewBuffer([]byte{})
+				err = response.Write(tempBuffer)
+
+				err = unix.Send(rwClientSocket, tempBuffer.Bytes(), 0)
+				if err != nil {
+					errorChannel <- fmt.Errorf("error while sending  proxy server response to client %v", err)
+				}
+
+				err = unix.Close(rwClientSocket)
+				if err != nil {
+					errorChannel <- fmt.Errorf("error while closing client  proxy rw socket %v", err)
+				}
+			}
+			continue
+		}
+
+		fmt.Println("File not in cache")
 		fmt.Println("Connecting to server...")
 		err = unix.Connect(serverSocket, &unix.SockaddrInet4{Port: matchLocation.ProxyPort, Addr: matchLocation.ProxyPath})
 		if err != nil {
@@ -188,17 +229,21 @@ func handleErrors() {
 	}
 }
 
-func sampleResponse() *http.Response { // Giving error when sending to curl
+func sampleResponse(body string) *http.Response { // Giving error when sending to curl
 	t := &http.Response{
-		Status:        "200 OK",
-		StatusCode:    200,
+		StatusCode:    http.StatusOK,
 		Proto:         "HTTP/1.1",
 		ProtoMajor:    1,
 		ProtoMinor:    1,
-		Body:          ioutil.NopCloser(bytes.NewBufferString("test")),
-		ContentLength: 4,
-		Header:        make(http.Header, 0),
+		Body:          ioutil.NopCloser(bytes.NewBufferString(body)),
+		Request:       &http.Request{Method: "GET"},
+		ContentLength: int64(len(body)),
+		Header:        http.Header{},
 	}
+	t.Header.Set("Content-Length", string(len(body)))        // Set the Date header
+	t.Header.Set("Content-Type", "application/octet-stream") // Set the Content-Type header
+	t.Header.Set("Server", "My HTTP Server")                 // Set the Server header
+	t.Header.Set("Date", "Sun, 24 Sep 2023 14:00:00 GMT")    // Set the Date header
 	return t
 }
 
