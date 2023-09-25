@@ -88,11 +88,9 @@ func ForwardClientToServer() {
 
 	defer wg.Done()
 
-	clientBuffer := make([]byte, 4096)
-	serverBuffer := make([]byte, 4096)
-
 	for rwClientSocket := range clientSocketChannel {
 
+		/* Prevent repeated code for closing socket */
 		defer func() {
 			err := unix.Close(rwClientSocket)
 			if err != nil {
@@ -100,43 +98,39 @@ func ForwardClientToServer() {
 			}
 		}()
 
-		go func() {
+		go func(rwClientSocket int) {
+			clientData := make([]byte, 4096)
 			var matchLocation Location = Location{Path: "", ProxyPort: -1}
 
-			fmt.Println("Creating socket to connect to server...")
-			serverSocket, err := unix.Socket(unix.AF_INET, unix.SOCK_STREAM, 0)
-			if err != nil {
-				errorChannel <- fmt.Errorf("error creating server socket %v", err)
-				return
-			}
+			/* Receive data from client */
 
 			fmt.Println("Receiving from client...")
-			_, _, err = unix.Recvfrom(rwClientSocket, clientBuffer, 0)
+			_, _, err := unix.Recvfrom(rwClientSocket, clientData, 0)
 			if err != nil {
 				errorChannel <- fmt.Errorf("error while receiving from client %v", err)
 				return
 			}
 
-			req, err := http.ReadRequest(bufio.NewReader(bytes.NewReader(clientBuffer)))
+			/* Match location with most specific location in proxy config */
+
+			req, err := http.ReadRequest(bufio.NewReader(bytes.NewReader(clientData)))
 			for _, location := range cacheconf.Server {
-				if strings.Contains(req.URL.Path, location.Path) { // location.Path stored in order of least to most specific
-					// fmt.Println("match")
-					// fmt.Println(location)
+				if strings.Contains(req.URL.Path, location.Path) {
 					matchLocation = location
 				}
 			}
-
-			// fmt.Println(matchLocation)
 
 			if matchLocation.Path == "" { // return 404
 				errorChannel <- fmt.Errorf("location not found on server %v", err)
 				return
 			}
 
-			if matchLocation.ProxyPort == -1 { // no proxy
+			/* If location not configured for any proxy */
+
+			if matchLocation.ProxyPort == -1 { // no proxy - return a simple message
 				fmt.Println("No proxy..")
 				response := sampleResponse("no proxy")
-				tempBuffer := bytes.NewBuffer(serverBuffer)
+				tempBuffer := bytes.NewBuffer(make([]byte, 4096))
 				err = response.Write(tempBuffer)
 				if err != nil {
 					errorChannel <- fmt.Errorf("error while writing non proxy response to buffer %v", err)
@@ -151,6 +145,8 @@ func ForwardClientToServer() {
 				return
 			}
 
+			/* Check if data exists in cache */
+
 			cache := checkCacheAndServe(req)
 			if cache != nil {
 				fmt.Println("Serving cache...")
@@ -161,65 +157,29 @@ func ForwardClientToServer() {
 				return
 			}
 
-			fmt.Println("Connecting to server...")
-			err = unix.Connect(serverSocket, &unix.SockaddrInet4{Port: matchLocation.ProxyPort, Addr: matchLocation.ProxyPath})
+			/* Data not in cache - get from server, pass to client and cache response */
+
+			serverData, err := proxyToServerAndGetRawResponse(matchLocation, clientData, req)
 			if err != nil {
-				errorChannel <- fmt.Errorf("error connecting to server %v", err)
+				errorChannel <- fmt.Errorf("error proxying to server and getting raw response %v", err)
 				return
-			}
-
-			// fmt.Printf("\nReceived %q, passing to server...", string(clientBuffer))
-			fmt.Println("Received, passing to server...")
-			err = unix.Send(serverSocket, clientBuffer, 0)
-			if err != nil {
-				errorChannel <- fmt.Errorf("error while sending to server %v", err)
-				return
-			}
-
-			fmt.Printf("\nGetting response from server")
-			_, _, err = unix.Recvfrom(serverSocket, serverBuffer, 0)
-			if err != nil {
-				errorChannel <- fmt.Errorf("error while receiving from client %v", err)
-				return
-			}
-
-			resp, err := http.ReadResponse(bufio.NewReader(bytes.NewReader(serverBuffer)), req)
-			respData := make([]byte, 4096)
-			cacheFile, err := os.OpenFile(CACHEPATH+"/"+path.Base(req.URL.Path), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0777)
-			if err != nil {
-				errorChannel <- fmt.Errorf("error while opening cache file to write to %v", err)
-			}
-			for {
-				_, err := resp.Body.Read(respData)
-				fmt.Println(string(respData))
-				if err == io.EOF {
-					_, err = cacheFile.Write(respData)
-					if err != nil {
-						errorChannel <- fmt.Errorf("error while writing cache file %v", err)
-					}
-					break
-				}
-				if err != nil {
-					errorChannel <- fmt.Errorf("error while opening cache file to write to %v", err)
-				}
-
-				_, err = cacheFile.Write(respData)
-				if err != nil {
-					errorChannel <- fmt.Errorf("error while writing cache file %v", err)
-				}
-			}
-			err = cacheFile.Close()
-			if err != nil {
-				errorChannel <- fmt.Errorf("error while closing cache file to write to %v", err)
 			}
 
 			fmt.Println("Passing server response to client...")
-			err = unix.Send(rwClientSocket, serverBuffer, 0)
+			err = unix.Send(rwClientSocket, serverData, 0)
 			if err != nil {
 				errorChannel <- fmt.Errorf("error while sending server response to client %v", err)
 			}
 
-		}()
+			resp, err := http.ReadResponse(bufio.NewReader(bytes.NewReader(serverData)), req)
+			if err != nil {
+				errorChannel <- fmt.Errorf("error parsing raw response %v", err)
+				return
+			}
+
+			cacheResponse(CACHEPATH+"/"+path.Base(req.URL.Path), resp)
+
+		}(rwClientSocket)
 	}
 }
 
@@ -270,6 +230,73 @@ func checkCacheAndServe(req *http.Request) []byte {
 
 }
 
+func proxyToServerAndGetRawResponse(matchLocation Location, clientData []byte, req *http.Request) ([]byte, error) {
+
+	serverData := make([]byte, 4096)
+
+	fmt.Println("Creating socket to connect to server...")
+	serverSocket, err := unix.Socket(unix.AF_INET, unix.SOCK_STREAM, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	fmt.Println("Connecting to server...")
+	err = unix.Connect(serverSocket, &unix.SockaddrInet4{Port: matchLocation.ProxyPort, Addr: matchLocation.ProxyPath})
+	if err != nil {
+		return nil, err
+	}
+
+	fmt.Println("Passing message to server...")
+	err = unix.Send(serverSocket, clientData, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	fmt.Printf("\nGetting response from server...")
+	_, _, err = unix.Recvfrom(serverSocket, serverData, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	return serverData, nil
+}
+
+func cacheResponse(filePath string, resp *http.Response) error {
+	respData := make([]byte, 4096)
+	cacheFile, err := os.OpenFile(filePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0777)
+	if err != nil {
+		return err
+	}
+
+	for {
+		_, err := resp.Body.Read(respData)
+		fmt.Println(string(respData))
+		if err == io.EOF {
+			_, err = cacheFile.Write(respData)
+			if err != nil {
+				return err
+			}
+			break
+		}
+
+		if err != nil {
+			return err
+		}
+
+		_, err = cacheFile.Write(respData)
+		if err != nil {
+			return err
+		}
+	}
+
+	err = cacheFile.Close()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func sampleResponse(body string) *http.Response {
 	t := &http.Response{
 		StatusCode:    http.StatusOK,
@@ -281,9 +308,5 @@ func sampleResponse(body string) *http.Response {
 		ContentLength: int64(len(body)),
 		Header:        http.Header{},
 	}
-	t.Header.Set("Content-Length", string(len(body)))        // Set the Date header
-	t.Header.Set("Content-Type", "application/octet-stream") // Set the Content-Type header
-	t.Header.Set("Server", "My HTTP Server")                 // Set the Server header
-	t.Header.Set("Date", "Sun, 24 Sep 2023 14:00:00 GMT")    // Set the Date header
 	return t
 }
