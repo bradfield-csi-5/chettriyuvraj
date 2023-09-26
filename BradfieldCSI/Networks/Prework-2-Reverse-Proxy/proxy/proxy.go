@@ -19,7 +19,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const PROXYPORTCLIENT = 7543
+const PROXYPORTCLIENT = 7540
 const NEWLINE, CARRIAGERETURN = 0x0a, 0x0d
 const CACHEPATH = "./cache"
 const MAXLISTENQUEUE = 3
@@ -30,7 +30,7 @@ var cacheconf CacheConf = CacheConf{
 		{Path: "", ServerPort: -1}, // always store in order of least to most specific
 		{Path: "/", ServerPort: -1},
 		{Path: "/local", ServerPort: -1},
-		{Path: "/proxy", ProxyPath: [4]byte{0x7F, 0x00, 0x00, 0x01}, ServerPort: 9001},
+		{Path: "/proxy", ProxyPath: [4]byte{0x7F, 0x00, 0x00, 0x01}, ServerPort: 9000},
 	},
 }
 
