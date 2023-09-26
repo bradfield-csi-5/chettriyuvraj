@@ -103,16 +103,24 @@ func ForwardClientToServer() {
 		}()
 
 		go func(rwClientSocket int) {
-			clientData := make([]byte, 4096)
+			clientData := []byte{}
+			clientBuffer := make([]byte, 4096)
 			var matchLocation Location = Location{Path: "", ProxyPort: -1}
 
 			/* Receive data from client */
 
 			fmt.Println("Receiving from client...")
-			_, _, err := unix.Recvfrom(rwClientSocket, clientData, 0)
-			if err != nil {
-				errorChannel <- fmt.Errorf("error while receiving from client %v", err)
-				return
+			for {
+				n, _, err := unix.Recvfrom(rwClientSocket, clientBuffer, 0)
+				if err != nil {
+					errorChannel <- fmt.Errorf("error while receiving from client %v", err)
+					return
+				}
+				fmt.Println(n)
+				if n == 0 {
+					break
+				}
+				clientData = append(clientData, clientBuffer[:n]...)
 			}
 
 			/* Match location with most specific location in proxy config */
@@ -141,6 +149,7 @@ func ForwardClientToServer() {
 					return
 				}
 
+				fmt.Println("Sending to client..")
 				err = unix.Send(rwClientSocket, nonProxyData, 0)
 				if err != nil {
 					errorChannel <- fmt.Errorf("error while sending non proxy server response to client %v", err)
@@ -204,6 +213,7 @@ func checkCacheAndServe(filePath string) ([]byte, error) {
 	fmt.Println("Checking cache...")
 
 	serverBuffer := make([]byte, 4096)
+	cacheSize := 0
 	f, err := os.OpenFile(filePath, os.O_RDONLY, 0777)
 
 	if err != nil {
@@ -214,7 +224,8 @@ func checkCacheAndServe(filePath string) ([]byte, error) {
 	}
 
 	for {
-		_, err = f.Read(serverBuffer)
+		n, err := f.Read(serverBuffer)
+		cacheSize += n
 		if err == io.EOF {
 			fmt.Println("Done writing cache to buffer...")
 			break
@@ -224,7 +235,7 @@ func checkCacheAndServe(filePath string) ([]byte, error) {
 		}
 	}
 
-	response := sampleResponse(string(serverBuffer))
+	response := sampleResponse(serverBuffer[:cacheSize])
 	tempBuffer := bytes.NewBuffer([]byte{})
 	err = response.Write(tempBuffer)
 	if err != nil {
@@ -237,7 +248,8 @@ func checkCacheAndServe(filePath string) ([]byte, error) {
 
 func proxyToServerAndGetRawResponse(matchLocation Location, clientData []byte, req *http.Request) ([]byte, error) {
 
-	serverData := make([]byte, 4096)
+	serverData := []byte{}
+	serverBuffer := make([]byte, 4096)
 
 	fmt.Println("Creating socket to connect to server...")
 	serverSocket, err := unix.Socket(unix.AF_INET, unix.SOCK_STREAM, 0)
@@ -258,9 +270,15 @@ func proxyToServerAndGetRawResponse(matchLocation Location, clientData []byte, r
 	}
 
 	fmt.Printf("\nGetting response from server...")
-	_, _, err = unix.Recvfrom(serverSocket, serverData, 0)
-	if err != nil {
-		return nil, err
+	for {
+		n, _, err := unix.Recvfrom(serverSocket, serverBuffer, 0)
+		if err != nil {
+			return nil, err
+		}
+		if n == 0 {
+			break
+		}
+		clientData = append(clientData, serverBuffer[:n]...)
 	}
 
 	return serverData, nil
@@ -274,10 +292,10 @@ func cacheResponse(filePath string, resp *http.Response) error {
 	}
 
 	for {
-		_, err := resp.Body.Read(respData)
+		n, err := resp.Body.Read(respData)
 		fmt.Println(string(respData))
 		if err == io.EOF {
-			_, err = cacheFile.Write(respData)
+			_, err = cacheFile.Write(respData[:n])
 			if err != nil {
 				return err
 			}
@@ -288,7 +306,7 @@ func cacheResponse(filePath string, resp *http.Response) error {
 			return err
 		}
 
-		_, err = cacheFile.Write(respData)
+		_, err = cacheFile.Write(respData[:n])
 		if err != nil {
 			return err
 		}
@@ -302,16 +320,18 @@ func cacheResponse(filePath string, resp *http.Response) error {
 	return nil
 }
 
-func sampleResponse(body string) *http.Response {
+func sampleResponse(body []byte) *http.Response {
 	t := &http.Response{
 		StatusCode:    http.StatusOK,
 		Proto:         "HTTP/1.1",
 		ProtoMajor:    1,
 		ProtoMinor:    1,
-		Body:          ioutil.NopCloser(bytes.NewBufferString(body)),
+		Body:          ioutil.NopCloser(bytes.NewBuffer(body)),
 		Request:       &http.Request{Method: "GET"},
 		ContentLength: int64(len(body)),
 		Header:        http.Header{},
 	}
+
+	t.Header.Set("Content-Type", "application/json")
 	return t
 }
