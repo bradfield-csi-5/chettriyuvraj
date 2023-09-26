@@ -8,6 +8,6 @@ type CacheConf struct {
 type Location struct {
 	Path string
 	// ProxyPass string
-	ProxyPath [4]byte // for simplicity
-	ProxyPort int
+	ProxyPath  [4]byte // for simplicity
+	ServerPort int
 }
