@@ -262,6 +262,7 @@ func proxyToServerAndGetRawResponse(matchLocation Location, clientData []byte, r
 	if err != nil {
 		return nil, fmt.Errorf("error creating socket to connect to server %v...", err)
 	}
+	defer unix.Close(serverSocket)
 
 	fmt.Println("Connecting to server...")
 	err = unix.Connect(serverSocket, &unix.SockaddrInet4{Port: matchLocation.ServerPort, Addr: matchLocation.ProxyPath})
