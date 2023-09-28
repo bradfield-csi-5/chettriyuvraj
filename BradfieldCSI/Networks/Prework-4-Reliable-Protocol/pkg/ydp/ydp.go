@@ -1,76 +1,24 @@
-package main
+package ydp
 
 import (
 	"bytes"
 	"encoding/binary"
 	"hash/fnv"
-	"log"
 	"time"
 
 	"golang.org/x/sys/unix"
 )
 
 type YDPPacket struct {
-	ID      uint32
-	Flags   uint8 /* 7 bits reserved, rightmost bit ack */
+	ID      uint32 /* Hash32(localaddr, localport, remoteip, remoteport, timestamp) */
+	Flags   uint8  /* 7 bits reserved, rightmost bit ack */
 	Length  uint16
 	Message []byte
 }
 
-var PROXYADDR unix.SockaddrInet4 = unix.SockaddrInet4{Port: 64640, Addr: [4]byte{0x7F, 0x00, 0x00, 0x01}}
-var RECVSOCKADDR unix.SockaddrInet4 = unix.SockaddrInet4{Port: 5432, Addr: [4]byte{0x7F, 0x00, 0x00, 0x01}}
-
-func main() {
-
-	err := SendYDP([]byte("Hi guys"), PROXYADDR)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-}
-
-func sendUDP(message []byte, sockaddr unix.SockaddrInet4) error {
-	socket, err := unix.Socket(unix.AF_INET, unix.SOCK_DGRAM, 0)
-	if err != nil {
-		return err
-	}
-
-	defer unix.Close(socket)
-
-	err = unix.Sendto(socket, message, 0, &sockaddr)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func receiveUDP(sockaddr unix.SockaddrInet4) (message []byte, sa unix.Sockaddr, err error) {
-	recvdmessage := make([]byte, 4096)
-
-	socket, err := unix.Socket(unix.AF_INET, unix.SOCK_DGRAM, 0)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	defer unix.Close(socket)
-
-	err = unix.Bind(socket, &sockaddr)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	n, sa, err := unix.Recvfrom(socket, recvdmessage, 0)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	return recvdmessage[:n], sa, nil
-}
-
-func SendYDP(message []byte, sockaddr unix.SockaddrInet4) error {
+func SendYDP(message []byte, srcaddr unix.SockaddrInet4, dstaddr unix.SockaddrInet4) error {
 	/* Get packet, encode in binary */
-	packetYDP, err := NewYDPPacket(message, 0x01, RECVSOCKADDR, sockaddr)
+	packetYDP, err := NewYDPPacket(message, 0x01, srcaddr, dstaddr)
 	if err != nil {
 		return err
 	}
@@ -80,7 +28,7 @@ func SendYDP(message []byte, sockaddr unix.SockaddrInet4) error {
 		return err
 	}
 
-	err = sendUDP(encoded, sockaddr)
+	err = sendUDP(encoded, dstaddr)
 	if err != nil {
 		return err
 	}
@@ -194,8 +142,41 @@ func AddrToByteSlice(addr unix.SockaddrInet4) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// message format
-// Header: 32 bit unique message hash, 1 bit ack
-// followed by message body
+func sendUDP(message []byte, sockaddr unix.SockaddrInet4) error {
+	socket, err := unix.Socket(unix.AF_INET, unix.SOCK_DGRAM, 0)
+	if err != nil {
+		return err
+	}
 
-// hash hashSrc
+	defer unix.Close(socket)
+
+	err = unix.Sendto(socket, message, 0, &sockaddr)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func receiveUDP(sockaddr unix.SockaddrInet4) (message []byte, sa unix.Sockaddr, err error) {
+	recvdmessage := make([]byte, 4096)
+
+	socket, err := unix.Socket(unix.AF_INET, unix.SOCK_DGRAM, 0)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	defer unix.Close(socket)
+
+	err = unix.Bind(socket, &sockaddr)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	n, sa, err := unix.Recvfrom(socket, recvdmessage, 0)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return recvdmessage[:n], sa, nil
+}
