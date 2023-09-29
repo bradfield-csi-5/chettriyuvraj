@@ -3,6 +3,7 @@ package ydp
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"hash/fnv"
 	"time"
 
@@ -16,24 +17,24 @@ type YDPPacket struct {
 	Message []byte
 }
 
-func SendYDP(message []byte, srcaddr unix.SockaddrInet4, dstaddr unix.SockaddrInet4) error {
+func SendYDP(message []byte, srcaddr unix.SockaddrInet4, dstaddr unix.SockaddrInet4) (YDPPacket, error) {
 	/* Get packet, encode in binary */
 	packetYDP, err := NewYDPPacket(message, 0x01, srcaddr, dstaddr)
 	if err != nil {
-		return err
+		return YDPPacket{}, err
 	}
 
 	encoded, err := packetYDP.encode()
 	if err != nil {
-		return err
+		return YDPPacket{}, err
 	}
 
 	err = sendUDP(encoded, dstaddr)
 	if err != nil {
-		return err
+		return YDPPacket{}, err
 	}
 
-	return nil
+	return packetYDP, nil
 }
 
 func (p *YDPPacket) encode() ([]byte, error) {
@@ -179,4 +180,22 @@ func receiveUDP(sockaddr unix.SockaddrInet4) (message []byte, sa unix.Sockaddr, 
 	}
 
 	return recvdmessage[:n], sa, nil
+}
+
+func DecodeYDPPacket(b []byte) (YDPPacket, error) {
+
+	if len(b) < 7 {
+		return YDPPacket{}, fmt.Errorf("incomplete YDP headers")
+	}
+
+	id := binary.BigEndian.Uint32(b[:4])
+	flags := b[4]
+	length := binary.BigEndian.Uint16(b[5:7])
+
+	if len(b) != int(length)+7 {
+		return YDPPacket{}, fmt.Errorf("message length mismatch in YDP packet")
+	}
+
+	return YDPPacket{ID: id, Flags: flags, Length: length, Message: b[7:]}, nil
+
 }

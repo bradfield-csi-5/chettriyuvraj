@@ -9,14 +9,15 @@ CORRUPTION_RATE = 0.1
 
 
 if __name__ == '__main__':
-    if len(sys.argv) != 2:
-        print('Usage: python3 unreliable_proxy.py destination_port')
+    if len(sys.argv) != 3:
+        print('Usage: python3 unreliable_proxy.py src_port destination_port')
         sys.exit(1)
 
-    dest = int(sys.argv[1])
+    src = int(sys.argv[1])
+    dest = int(sys.argv[2])
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.bind(('', 0))
+        sock.bind(('', src))
         host, port = sock.getsockname()
         print(f'Forwarding {host}:{port} -> 127.0.0.1:{dest}')
 
