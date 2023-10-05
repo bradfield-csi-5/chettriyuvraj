@@ -18,7 +18,7 @@ func TestICMP(t *testing.T) {
 
 		for _, packet := range data {
 			want := packet.ReqChecksum
-			got := packet.Packet.computeChecksum()
+			got := packet.Packet.ComputeChecksum()
 			if want != got {
 				t.Errorf("error computing checksum, wanted %d, got %d", want, got)
 			}
@@ -48,7 +48,7 @@ func TestICMP(t *testing.T) {
 	t.Run("Test icmp encode", func(t *testing.T) {
 		packet := ICMPPacket{Type: 0x55, Code: 0x13, Checksum: uint16(20), ID: uint16(118), SequenceNo: uint16(66), Data: []byte{0x55, 0x32, 0x22, 0x11}}
 		want := []byte{0x55, 0x13, 0x00, 0x14, 0x00, 0x76, 0x00, 0x42, 0x55, 0x32, 0x22, 0x11}
-		got, _ := packet.encode()
+		got, _ := packet.Encode()
 
 		if !bytes.Equal(want, got) {
 			t.Errorf("error encoding checksum, wanted %d, got %d", want, got)
@@ -109,7 +109,7 @@ func TestIP(t *testing.T) {
 	t.Run("Test IP encode", func(t *testing.T) {
 		packet := NewIPv4(0, 0, 1, []byte{})
 		want := []byte{0x45, 0x00, 0x00, 0x14, 0x00, 0x00, 0x40, 0x00, 0x01, 0x01, 0x86, 0x15, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
-		got, _ := packet.encode()
+		got, _ := packet.Encode()
 
 		if !bytes.Equal(want, got) {
 			t.Errorf("error encoding checksum, wanted %d, got %d", want, got)

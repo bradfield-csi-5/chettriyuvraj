@@ -1,45 +1,122 @@
 package main
 
 import (
+	"encoding/binary"
 	"fmt"
 	"log"
-	"syscall"
+	"time"
+
+	"github.com/bradfield-csi-5/chettriyuvraj/Prework-5-Traceroute/pkg/traceroute"
+	"golang.org/x/sys/unix"
 )
 
-var CLIENTADDR syscall.SockaddrInet4 = syscall.SockaddrInet4{Port: 5431, Addr: [4]byte{0x7F, 0x00, 0x00, 0x01}}
+var CLIENTADDR unix.SockaddrInet4 = unix.SockaddrInet4{Port: 5431, Addr: [4]byte{0xC0, 0xA8, 0x01, 0x04}}
+
+var DESTADDR unix.SockaddrInet4 = unix.SockaddrInet4{Port: 5431, Addr: [4]byte{0x8E, 0xFA, 0xB7, 0xCE}}
 
 func main() {
+	icmpPacket := traceroute.NewICMPPacket(0x08, 0x00, []byte{})
 
+	trace(icmpPacket, CLIENTADDR, DESTADDR)
 }
 
-/********
-- Traceroute
-- Decide structure of ICMP and IP requests
-- IPv4
-	- Version: 4 - 4 bits
-	- IHL (Header Length): 20 bytes - 4 bits
-	- TOS: 0 - 8 bits
-	- Total Length: IP Header length + data length in octets - 16 bits
-	- Identification - (any identifier doesn't matter) 16 bits,
-	- Flags - 0 (reserved) 1 (Don't fragment) 0 (Last fragment) 3 bits
-	- Fragmentation offset (0 since first and only fragment has 0 offset) - 13 bits
-	- TTL - inc by 1 each time - 8 bits
-	- UL Protocol - 8 bits - 1 for ICMP
-	- Header checksum - 16 bits - consider checksum itself as 0 when computing - checksum only on the entire header
-	- Source IP - self val - 32 bit
-	- Dest IP - dest val - 32 bit
+func trace(icmpPacket traceroute.ICMPPacket, selfAddr unix.SockaddrInet4, destAddr unix.SockaddrInet4) error {
+	recvBuffer := make([]byte, 4096)
+	traceMap := make(map[uint16]*traceroute.TraceICMP)
 
-	- Data - ICMP packet
+	/* Sending socket  */
+	sendSocket, err := unix.Socket(unix.AF_INET, unix.SOCK_RAW, unix.IPPROTO_ICMP)
+	if err != nil {
+		log.Fatalf("error creating socket for server %s", err)
+	}
+	defer unix.Close(sendSocket)
 
-- ICMP (IPv4 payload)
-	- Type - 8 for echo message/0 for echo reply - 8 bits
-	- Code - 0 for echo reply - 8 bits
-	- Checksum - 16 bits header + data
-	- Identifier - 16 bits - to help in identifying req and resp echos
-	- Sequence no - 16 bits - same as identifier
-	- Data - variable - put nothing
+	/* Recv socket with timeout */
+	recvSocket, err := unix.Socket(unix.AF_INET, unix.SOCK_RAW, unix.IPPROTO_ICMP)
+	if err != nil {
+		log.Fatalf("error creating recv socket for server %s", err)
+	}
+	defer unix.Close(recvSocket)
 
-- Quickly write NewIPv4Packet and NewTraceRoute funcs which return struct
-- Quickly write encode decode methods for two respective structs
+	tv := unix.Timeval{Sec: int64(10), Usec: 0}
+	err = unix.SetsockoptTimeval(recvSocket, unix.SOL_SOCKET, unix.SO_RCVTIMEO, &tv)
+	if err != nil {
+		log.Fatalf("error setting recv sock opt %s", err)
+	}
 
-********/
+	/* Traceroute */
+	counter := uint16(0)
+	isComplete := false
+	for i := 1; isComplete == false; i++ {
+
+		err = unix.SetsockoptInt(sendSocket, unix.IPPROTO_IP, unix.IP_TTL, i)
+		if err != nil {
+			log.Fatalf("error setting sock opt %s", err)
+		}
+
+		for j := 0; j < 3; j++ {
+			/* Add ID, Sequence no and checksum */
+			icmpPacket.ID = counter
+			icmpPacket.SequenceNo = counter
+			icmpPacket.Checksum = icmpPacket.ComputeChecksum()
+			counter += 1
+
+			icmpEncoded, err := icmpPacket.Encode()
+			if err != nil {
+				fmt.Printf("error encoding message to dest %s", err)
+			}
+
+			traceMap[counter-1] = &traceroute.TraceICMP{Packet: icmpPacket, StartTime: time.Now()}
+
+			err = unix.Sendto(sendSocket, icmpEncoded, 0, &destAddr)
+			if err != nil {
+				fmt.Printf("error sending message to dest %s", err)
+			}
+		}
+
+		for j := 0; j < 3; j++ {
+			n, _, err := unix.Recvfrom(recvSocket, recvBuffer, 0)
+
+			if err != nil {
+				fmt.Printf("\n\nerror recv message from dest %s", err)
+				continue
+			}
+
+			recvEncoded := recvBuffer[:n]
+			fmt.Printf("\nEncoded %x", recvEncoded)
+			recvIPPacket, err := traceroute.DecodeIPv4Packet(recvEncoded)
+			if err != nil {
+				fmt.Printf("error decoding recvd ipv4 packet %s", err)
+				continue
+			}
+
+			fmt.Printf("\nIP Data %x", recvIPPacket.Data)
+			recvICMPPacket, err := traceroute.DecodeICMPPacket(recvIPPacket.Data)
+			if err != nil {
+				fmt.Printf("error decoding recvd icmp packet %s", err)
+				continue
+			}
+			fmt.Printf("\n\n Decoded packet \n Type: %d \n Code: %d \n Checksum %x \nID %d\n Sequence No %d", recvICMPPacket.Type, recvICMPPacket.Code, recvICMPPacket.Checksum, recvICMPPacket.ID, recvICMPPacket.SequenceNo)
+
+			if recvIPPacket.SourceIP == binary.BigEndian.Uint32(DESTADDR.Addr[:]) && j == 2 { /* Response received from dest and final i.e 3rd packet receieved */
+				isComplete = true
+			}
+
+			matchingPacket, ok := traceMap[recvICMPPacket.ID]
+			if !ok {
+				fmt.Printf("Sequence no %d not found in map %s", recvICMPPacket.SequenceNo)
+				continue
+			}
+			matchingPacket.EndTime = time.Now()
+			matchingPacket.Response = recvICMPPacket
+
+		}
+	}
+
+	for k := range traceMap {
+		fmt.Println(k)
+		fmt.Println(traceMap[k])
+	}
+
+	return nil
+}
