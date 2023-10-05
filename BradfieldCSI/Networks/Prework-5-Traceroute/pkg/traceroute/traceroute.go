@@ -29,7 +29,6 @@ func NewIPv4(sourceIP uint32, destIP uint32, ttl uint8, data []byte) IPv4Packet 
 		DestIP:                destIP,
 	}
 	packet.HeaderChecksum = packet.computeHeaderChecksum()
-	fmt.Printf("%d", packet.TotalLen)
 	return packet
 }
 
@@ -130,8 +129,6 @@ func (p *ICMPPacket) ComputeChecksum() uint16 {
 		carry16 := uint16(sum32 >> 16)
 		sum16 = uint16(sum32) + carry16
 	}
-
-	fmt.Printf("\n%x xor res sum16", 0xFFFF^sum16)
 
 	return 0xFFFF ^ sum16
 }

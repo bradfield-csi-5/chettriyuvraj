@@ -11,7 +11,6 @@ import (
 )
 
 var CLIENTADDR unix.SockaddrInet4 = unix.SockaddrInet4{Port: 5431, Addr: [4]byte{0xC0, 0xA8, 0x01, 0x04}}
-
 var DESTADDR unix.SockaddrInet4 = unix.SockaddrInet4{Port: 5431, Addr: [4]byte{0x8E, 0xFA, 0xB7, 0xCE}}
 
 func main() {
@@ -63,14 +62,16 @@ func trace(icmpPacket traceroute.ICMPPacket, selfAddr unix.SockaddrInet4, destAd
 
 			icmpEncoded, err := icmpPacket.Encode()
 			if err != nil {
-				fmt.Printf("error encoding message to dest %s", err)
+				fmt.Printf("\n\nerror encoding message to dest %s", err)
+				continue
 			}
 
 			traceMap[counter-1] = &traceroute.TraceICMP{Packet: icmpPacket, StartTime: time.Now()}
 
 			err = unix.Sendto(sendSocket, icmpEncoded, 0, &destAddr)
 			if err != nil {
-				fmt.Printf("error sending message to dest %s", err)
+				fmt.Printf("\n\nerror sending message to dest %s", err)
+				continue
 			}
 		}
 
@@ -83,20 +84,18 @@ func trace(icmpPacket traceroute.ICMPPacket, selfAddr unix.SockaddrInet4, destAd
 			}
 
 			recvEncoded := recvBuffer[:n]
-			fmt.Printf("\nEncoded %x", recvEncoded)
 			recvIPPacket, err := traceroute.DecodeIPv4Packet(recvEncoded)
 			if err != nil {
-				fmt.Printf("error decoding recvd ipv4 packet %s", err)
+				fmt.Printf("\n\nerror decoding recvd ipv4 packet %s", err)
 				continue
 			}
 
 			fmt.Printf("\nIP Data %x", recvIPPacket.Data)
 			recvICMPPacket, err := traceroute.DecodeICMPPacket(recvIPPacket.Data)
 			if err != nil {
-				fmt.Printf("error decoding recvd icmp packet %s", err)
+				fmt.Printf("\n\nerror decoding recvd icmp packet %s", err)
 				continue
 			}
-			fmt.Printf("\n\n Decoded packet \n Type: %d \n Code: %d \n Checksum %x \nID %d\n Sequence No %d", recvICMPPacket.Type, recvICMPPacket.Code, recvICMPPacket.Checksum, recvICMPPacket.ID, recvICMPPacket.SequenceNo)
 
 			if recvIPPacket.SourceIP == binary.BigEndian.Uint32(DESTADDR.Addr[:]) && j == 2 { /* Response received from dest and final i.e 3rd packet receieved */
 				isComplete = true
@@ -111,11 +110,6 @@ func trace(icmpPacket traceroute.ICMPPacket, selfAddr unix.SockaddrInet4, destAd
 			matchingPacket.Response = recvICMPPacket
 
 		}
-	}
-
-	for k := range traceMap {
-		fmt.Println(k)
-		fmt.Println(traceMap[k])
 	}
 
 	return nil

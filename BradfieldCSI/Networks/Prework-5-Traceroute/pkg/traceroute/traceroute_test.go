@@ -12,15 +12,15 @@ func TestICMP(t *testing.T) {
 			Packet      ICMPPacket
 			ReqChecksum uint16
 		}{
-			{ICMPPacket{Type: 0x02, Code: 0x44, Data: []byte{0x01, 0x03, 0x04}}, 0x0747},
-			{ICMPPacket{Type: 0x02, Code: 0x44, Data: []byte{0xF1, 0x03, 0x14}}, 0x0748},
+			{ICMPPacket{Type: 0x02, Code: 0x44, Data: []byte{0x01, 0x03, 0x04}}, 0xf8b8},
+			{ICMPPacket{Type: 0x02, Code: 0x44, Data: []byte{0xF1, 0x03, 0x14}}, 0xf8b7},
 		}
 
 		for _, packet := range data {
 			want := packet.ReqChecksum
 			got := packet.Packet.ComputeChecksum()
 			if want != got {
-				t.Errorf("error computing checksum, wanted %d, got %d", want, got)
+				t.Errorf("error computing checksum, wanted %x, got %x", want, got)
 			}
 		}
 	})
@@ -45,6 +45,9 @@ func TestICMP(t *testing.T) {
 	// ------
 	// 0x0748
 
+	// 0000 0111 0100 1000
+	// 1111 1000 1011 0111
+
 	t.Run("Test icmp encode", func(t *testing.T) {
 		packet := ICMPPacket{Type: 0x55, Code: 0x13, Checksum: uint16(20), ID: uint16(118), SequenceNo: uint16(66), Data: []byte{0x55, 0x32, 0x22, 0x11}}
 		want := []byte{0x55, 0x13, 0x00, 0x14, 0x00, 0x76, 0x00, 0x42, 0x55, 0x32, 0x22, 0x11}
@@ -56,8 +59,8 @@ func TestICMP(t *testing.T) {
 	})
 
 	t.Run("Test icmp decode", func(t *testing.T) {
-		got, _ := DecodeICMPPacket([]byte{0x55, 0x13, 0x00, 0x14, 0x00, 0x76, 0x00, 0x42, 0x55, 0x32, 0x22, 0x11})
-		want := ICMPPacket{Type: 0x55, Code: 0x13, Checksum: 0x0014, ID: 0x0076, SequenceNo: 0x0042, Data: []byte{0x55, 0x32, 0x22, 0x11}}
+		got, _ := DecodeICMPPacket([]byte{0x00, 0x00, 0xff, 0xd5, 0x00, 0x16, 0x00, 0x15, 0x00, 0x19})
+		want := ICMPPacket{Type: 0x00, Code: 0x00, Checksum: 0xffd5, ID: 0x0016, SequenceNo: 0x0015, Data: []byte{0x00, 0x19}}
 
 		if !bytes.Equal(got.Data, want.Data) || got.Type != want.Type || got.Code != want.Code || got.Checksum != want.Checksum || got.ID != want.ID || got.SequenceNo != want.SequenceNo {
 			t.Errorf("error decoding checksum, wanted %d, got %d", want, got)
