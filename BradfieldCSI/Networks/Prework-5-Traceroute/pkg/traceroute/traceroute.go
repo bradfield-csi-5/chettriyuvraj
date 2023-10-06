@@ -4,38 +4,113 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"log"
 	"math/bits"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
 
-func Traceroute(sourceIP unix.SockaddrInet4, destIP unix.SockaddrInet4) {
+func Trace(selfAddr unix.SockaddrInet4, destAddr unix.SockaddrInet4) error {
+	icmpPacket := NewICMPPacket(0x08, 0x00, []byte{})
+	recvBuffer := make([]byte, 4096)
+	traceMap := make(map[uint16]*TraceICMP)
 
-}
-
-/* Assuming ICMP packet */
-func NewIPv4(sourceIP uint32, destIP uint32, ttl uint8, data []byte) IPv4Packet {
-
-	packet := IPv4Packet{
-		VersionAndIHL:         0x45,
-		TOS:                   0x00,
-		TotalLen:              0x14 + uint16(len(data)),
-		ID:                    0x0000,
-		FlagsAndFragmentation: 0x4000, /* don't fragment */
-		TTL:                   ttl,
-		ULProto:               0x0001, /* ICMP */
-		HeaderChecksum:        0x0000,
-		SourceIP:              sourceIP,
-		DestIP:                destIP,
+	/* Sending socket  */
+	sendSocket, err := unix.Socket(unix.AF_INET, unix.SOCK_RAW, unix.IPPROTO_ICMP)
+	if err != nil {
+		log.Fatalf("error creating socket for server %s", err)
 	}
-	packet.HeaderChecksum = packet.computeHeaderChecksum()
-	return packet
+	defer unix.Close(sendSocket)
+
+	/* Recv socket with timeout */
+	recvSocket, err := unix.Socket(unix.AF_INET, unix.SOCK_RAW, unix.IPPROTO_ICMP)
+	if err != nil {
+		log.Fatalf("error creating recv socket for server %s", err)
+	}
+	defer unix.Close(recvSocket)
+
+	tv := unix.Timeval{Sec: int64(10), Usec: 0}
+	err = unix.SetsockoptTimeval(recvSocket, unix.SOL_SOCKET, unix.SO_RCVTIMEO, &tv)
+	if err != nil {
+		log.Fatalf("error setting recv sock opt %s", err)
+	}
+
+	/* Traceroute */
+	counter := uint16(0)
+	isComplete := false
+	for i := 1; isComplete == false; i++ {
+
+		err = unix.SetsockoptInt(sendSocket, unix.IPPROTO_IP, unix.IP_TTL, i)
+		if err != nil {
+			log.Fatalf("error setting sock opt %s", err)
+		}
+
+		for j := 0; j < 3; j++ {
+			/* Add ID, Sequence no and checksum */
+			icmpPacket.ID = counter
+			icmpPacket.SequenceNo = counter
+			icmpPacket.Checksum = icmpPacket.ComputeChecksum()
+			counter += 1
+
+			icmpEncoded, err := icmpPacket.Encode()
+			if err != nil {
+				fmt.Printf("\n\nerror encoding message to dest %s", err)
+				continue
+			}
+
+			traceMap[counter-1] = &TraceICMP{Packet: icmpPacket, StartTime: time.Now()}
+
+			err = unix.Sendto(sendSocket, icmpEncoded, 0, &destAddr)
+			if err != nil {
+				fmt.Printf("\n\nerror sending message to dest %s", err)
+				continue
+			}
+		}
+
+		for j := 0; j < 3; j++ {
+			n, _, err := unix.Recvfrom(recvSocket, recvBuffer, 0)
+
+			if err != nil {
+				fmt.Printf("\n\nerror recv message from dest %s", err)
+				continue
+			}
+
+			recvEncoded := recvBuffer[:n]
+			recvIPPacket, err := DecodeIPv4Packet(recvEncoded)
+			if err != nil {
+				fmt.Printf("\n\nerror decoding recvd ipv4 packet %s", err)
+				continue
+			}
+
+			recvICMPPacket, err := DecodeICMPPacket(recvIPPacket.Data)
+			if err != nil {
+				fmt.Printf("\n\nerror decoding recvd icmp packet %s", err)
+				continue
+			}
+
+			if recvIPPacket.SourceIP == binary.BigEndian.Uint32(destAddr.Addr[:]) && j == 2 { /* Response received from dest and final i.e 3rd packet receieved */
+				isComplete = true
+			}
+
+			matchingPacket, ok := traceMap[recvICMPPacket.ID]
+			if !ok {
+				fmt.Printf("Sequence no %d not found", recvICMPPacket.SequenceNo)
+				continue
+			}
+			matchingPacket.EndTime = time.Now()
+			matchingPacket.Response = recvICMPPacket
+
+		}
+	}
+
+	return nil
 }
 
 func NewICMPPacket(ptype uint8, code uint8, data []byte) ICMPPacket {
 	packet := ICMPPacket{Type: ptype, Code: code, ID: 0x0000, SequenceNo: 0x0000, Data: data}
 	packet.Checksum = packet.ComputeChecksum()
-	return packet // TODO: check and correct checksum computation
+	return packet
 }
 
 /* Assume echo packet and encode id, seq no */
@@ -111,7 +186,6 @@ func DecodeICMPOtherPacket(b []byte) (ICMPPacket, error) {
 	return icmppacket, nil
 }
 
-/* Ignore ID, SequenceNo, always 0 */
 func (p *ICMPPacket) ComputeChecksum() uint16 {
 	sum16 := uint16(p.Type)<<8 | uint16(p.Code)
 	sum16 += p.SequenceNo + p.ID
@@ -133,7 +207,81 @@ func (p *ICMPPacket) ComputeChecksum() uint16 {
 	return 0xFFFF ^ sum16
 }
 
-/* Assume echo packet and encode id, seq no */
+func DecodeIPv4Packet(b []byte) (IPv4Packet, error) {
+	if len(b) < 20 {
+		return IPv4Packet{}, fmt.Errorf("invalid ip packet length")
+	}
+	/* Arbitrarily assuming packet as 20 bytes */
+	return IPv4Packet{VersionAndIHL: b[0], TOS: b[1], TotalLen: binary.BigEndian.Uint16(b[2:4]), ID: binary.BigEndian.Uint16(b[4:6]), FlagsAndFragmentation: binary.BigEndian.Uint16(b[6:8]), TTL: b[8], ULProto: b[9], HeaderChecksum: binary.BigEndian.Uint16(b[10:12]), SourceIP: binary.BigEndian.Uint32(b[12:16]), DestIP: binary.BigEndian.Uint32(b[16:20]), Data: b[20:]}, nil
+}
+
+/**
+ * Unused functions
+ * Had assumed I would have to frame my own IP packets entirely to implement tracing with SOCK_RAW
+ * Turned out not to be the case
+ **/
+
+func (p *IPv4Packet) computeHeaderChecksum() uint16 {
+	sum16 := uint16(p.VersionAndIHL)<<8 | uint16(p.TOS) /* Start with version,IHL + TOS */
+
+	sum32, _ := bits.Add32(uint32(p.TotalLen), uint32(sum16), 0)
+	carry16 := uint16(sum32 >> 16)
+	sum16 = uint16(sum32) + carry16
+
+	sum32, _ = bits.Add32(uint32(p.ID), uint32(sum16), 0)
+	carry16 = uint16(sum32 >> 16)
+	sum16 = uint16(sum32) + carry16
+
+	sum32, _ = bits.Add32(uint32(p.FlagsAndFragmentation), uint32(sum16), 0)
+	carry16 = uint16(sum32 >> 16)
+	sum16 = uint16(sum32) + carry16
+
+	sum32, _ = bits.Add32(uint32(uint16(p.TTL)<<8|uint16(p.ULProto)), uint32(sum16), 0)
+	carry16 = uint16(sum32 >> 16)
+	sum16 = uint16(sum32) + carry16
+
+	sum32, _ = bits.Add32(uint32(p.HeaderChecksum), uint32(sum16), 0)
+	carry16 = uint16(sum32 >> 16)
+	sum16 = uint16(sum32) + carry16
+
+	sum32, _ = bits.Add32(uint32(uint16(p.SourceIP)), uint32(sum16), 0)
+	carry16 = uint16(sum32 >> 16)
+	sum16 = uint16(sum32) + carry16
+
+	sum32, _ = bits.Add32(uint32(uint16(p.SourceIP>>16)), uint32(sum16), 0)
+	carry16 = uint16(sum32 >> 16)
+	sum16 = uint16(sum32) + carry16
+
+	sum32, _ = bits.Add32(uint32(uint16(p.DestIP)), uint32(sum16), 0)
+	carry16 = uint16(sum32 >> 16)
+	sum16 = uint16(sum32) + carry16
+
+	sum32, _ = bits.Add32(uint32(uint16(p.DestIP>>16)), uint32(sum16), 0)
+	carry16 = uint16(sum32 >> 16)
+	sum16 = uint16(sum32) + carry16
+
+	return sum16
+}
+
+/* Assuming ICMP packet */
+func NewIPv4(sourceIP uint32, destIP uint32, ttl uint8, data []byte) IPv4Packet {
+
+	packet := IPv4Packet{
+		VersionAndIHL:         0x45,
+		TOS:                   0x00,
+		TotalLen:              0x14 + uint16(len(data)),
+		ID:                    0x0000,
+		FlagsAndFragmentation: 0x4000, /* don't fragment */
+		TTL:                   ttl,
+		ULProto:               0x0001, /* ICMP */
+		HeaderChecksum:        0x0000,
+		SourceIP:              sourceIP,
+		DestIP:                destIP,
+	}
+	packet.HeaderChecksum = packet.computeHeaderChecksum()
+	return packet
+}
+
 func (p *IPv4Packet) Encode() ([]byte, error) {
 	buf := new(bytes.Buffer)
 
@@ -193,54 +341,4 @@ func (p *IPv4Packet) Encode() ([]byte, error) {
 	}
 
 	return buf.Bytes(), nil
-}
-
-func DecodeIPv4Packet(b []byte) (IPv4Packet, error) {
-	if len(b) < 20 {
-		return IPv4Packet{}, fmt.Errorf("invalid ip packet length")
-	}
-	/* Arbitrarily assuming packet as 20 bytes */
-	return IPv4Packet{VersionAndIHL: b[0], TOS: b[1], TotalLen: binary.BigEndian.Uint16(b[2:4]), ID: binary.BigEndian.Uint16(b[4:6]), FlagsAndFragmentation: binary.BigEndian.Uint16(b[6:8]), TTL: b[8], ULProto: b[9], HeaderChecksum: binary.BigEndian.Uint16(b[10:12]), SourceIP: binary.BigEndian.Uint32(b[12:16]), DestIP: binary.BigEndian.Uint32(b[16:20]), Data: b[20:]}, nil
-}
-
-func (p *IPv4Packet) computeHeaderChecksum() uint16 {
-	sum16 := uint16(p.VersionAndIHL)<<8 | uint16(p.TOS) /* Start with version,IHL + TOS */
-
-	sum32, _ := bits.Add32(uint32(p.TotalLen), uint32(sum16), 0)
-	carry16 := uint16(sum32 >> 16)
-	sum16 = uint16(sum32) + carry16
-
-	sum32, _ = bits.Add32(uint32(p.ID), uint32(sum16), 0)
-	carry16 = uint16(sum32 >> 16)
-	sum16 = uint16(sum32) + carry16
-
-	sum32, _ = bits.Add32(uint32(p.FlagsAndFragmentation), uint32(sum16), 0)
-	carry16 = uint16(sum32 >> 16)
-	sum16 = uint16(sum32) + carry16
-
-	sum32, _ = bits.Add32(uint32(uint16(p.TTL)<<8|uint16(p.ULProto)), uint32(sum16), 0)
-	carry16 = uint16(sum32 >> 16)
-	sum16 = uint16(sum32) + carry16
-
-	sum32, _ = bits.Add32(uint32(p.HeaderChecksum), uint32(sum16), 0)
-	carry16 = uint16(sum32 >> 16)
-	sum16 = uint16(sum32) + carry16
-
-	sum32, _ = bits.Add32(uint32(uint16(p.SourceIP)), uint32(sum16), 0)
-	carry16 = uint16(sum32 >> 16)
-	sum16 = uint16(sum32) + carry16
-
-	sum32, _ = bits.Add32(uint32(uint16(p.SourceIP>>16)), uint32(sum16), 0)
-	carry16 = uint16(sum32 >> 16)
-	sum16 = uint16(sum32) + carry16
-
-	sum32, _ = bits.Add32(uint32(uint16(p.DestIP)), uint32(sum16), 0)
-	carry16 = uint16(sum32 >> 16)
-	sum16 = uint16(sum32) + carry16
-
-	sum32, _ = bits.Add32(uint32(uint16(p.DestIP>>16)), uint32(sum16), 0)
-	carry16 = uint16(sum32 >> 16)
-	sum16 = uint16(sum32) + carry16
-
-	return sum16
 }
