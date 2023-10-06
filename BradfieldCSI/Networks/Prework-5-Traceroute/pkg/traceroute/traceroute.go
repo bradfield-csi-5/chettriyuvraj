@@ -13,14 +13,20 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func Trace(selfAddr unix.SockaddrInet4, destAddr unix.SockaddrInet4) error {
+func Trace(destAddr unix.SockaddrInet4) error {
 	icmpPacket := NewICMPPacket(0x08, 0x00, []byte{})
 	recvBuffer := make([]byte, 4096)
 	traceMap := make(map[uint16]*TraceICMP)
 
+	fmt.Printf("\n\nxx----------------UGLY PRINT WARNING----------------------xx\n\n\n")
+
+	fmt.Printf("\n\nxx----------------TRACING IS VERY FAST, SLEEP DELIBERATELY ADDED----------------------xx\n\n\n")
 	t := table.NewWriter()
 	t.SetOutputMirror(os.Stdout)
 	t.AppendHeader(table.Row{"#", "Start IP", "Route IP", "RTT"})
+
+	t.Render()
+	t.ResetHeaders()
 
 	/* Sending socket  */
 	sendSocket, err := unix.Socket(unix.AF_INET, unix.SOCK_RAW, unix.IPPROTO_ICMP)
@@ -78,20 +84,23 @@ func Trace(selfAddr unix.SockaddrInet4, destAddr unix.SockaddrInet4) error {
 			n, _, err := unix.Recvfrom(recvSocket, recvBuffer, 0)
 
 			if err != nil {
-				fmt.Printf("\n\nerror recv message from dest %s", err)
+				// fmt.Printf("\n\nerror recv message from dest %s", err)
+				t.AppendRow([]interface{}{"-----------", err, "-----------"})
 				continue
 			}
 
 			recvEncoded := recvBuffer[:n]
 			recvIPPacket, err := DecodeIPv4Packet(recvEncoded)
 			if err != nil {
-				fmt.Printf("\n\nerror decoding recvd ipv4 packet %s", err)
+				// fmt.Printf("\n\nerror decoding recvd ipv4 packet %s", err)
+				t.AppendRow([]interface{}{"-----------", err, "-----------"})
 				continue
 			}
 
 			recvICMPPacket, err := DecodeICMPPacket(recvIPPacket.Data)
 			if err != nil {
-				fmt.Printf("\n\nerror decoding recvd icmp packet %s", err)
+				// fmt.Printf("\n\nerror decoding recvd icmp packet %s", err)
+				t.AppendRow([]interface{}{"-----------", err, "-----------"})
 				continue
 			}
 
@@ -101,17 +110,21 @@ func Trace(selfAddr unix.SockaddrInet4, destAddr unix.SockaddrInet4) error {
 
 			matchingPacket, ok := traceMap[recvICMPPacket.ID]
 			if !ok {
-				fmt.Printf("Sequence no %d not found", recvICMPPacket.SequenceNo)
+				// fmt.Printf("\n\nSequence no %d not found", recvICMPPacket.SequenceNo)
+				t.AppendRow([]interface{}{"-----------", err, "-----------"})
 				continue
 			}
 			matchingPacket.EndTime = time.Now()
 			matchingPacket.Response = recvICMPPacket
 
-			t.AppendRow([]interface{}{matchingPacket.Packet.ID, selfAddr.Addr, uint32toIPv4(recvIPPacket.SourceIP), matchingPacket.EndTime.Sub(matchingPacket.StartTime)})
+			t.AppendRow([]interface{}{matchingPacket.Packet.ID, uint32toIPv4(recvIPPacket.DestIP), uint32toIPv4(recvIPPacket.SourceIP), matchingPacket.EndTime.Sub(matchingPacket.StartTime)})
+
 		}
+		time.Sleep(time.Second * 3)
 		t.AppendSeparator()
+		t.Render()
+		t.ResetRows()
 	}
-	t.Render()
 
 	return nil
 }
