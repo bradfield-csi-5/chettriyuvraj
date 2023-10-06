@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"log"
 	"math/bits"
+	"os"
 	"time"
 
+	"github.com/jedib0t/go-pretty/v6/table"
 	"golang.org/x/sys/unix"
 )
 
@@ -15,6 +17,10 @@ func Trace(selfAddr unix.SockaddrInet4, destAddr unix.SockaddrInet4) error {
 	icmpPacket := NewICMPPacket(0x08, 0x00, []byte{})
 	recvBuffer := make([]byte, 4096)
 	traceMap := make(map[uint16]*TraceICMP)
+
+	t := table.NewWriter()
+	t.SetOutputMirror(os.Stdout)
+	t.AppendHeader(table.Row{"#", "Start IP", "Route IP", "RTT"})
 
 	/* Sending socket  */
 	sendSocket, err := unix.Socket(unix.AF_INET, unix.SOCK_RAW, unix.IPPROTO_ICMP)
@@ -59,7 +65,7 @@ func Trace(selfAddr unix.SockaddrInet4, destAddr unix.SockaddrInet4) error {
 				continue
 			}
 
-			traceMap[counter-1] = &TraceICMP{Packet: icmpPacket, StartTime: time.Now()}
+			traceMap[icmpPacket.ID] = &TraceICMP{Packet: icmpPacket, StartTime: time.Now()}
 
 			err = unix.Sendto(sendSocket, icmpEncoded, 0, &destAddr)
 			if err != nil {
@@ -101,12 +107,14 @@ func Trace(selfAddr unix.SockaddrInet4, destAddr unix.SockaddrInet4) error {
 			matchingPacket.EndTime = time.Now()
 			matchingPacket.Response = recvICMPPacket
 
+			t.AppendRow([]interface{}{matchingPacket.Packet.ID, selfAddr.Addr, uint32toIPv4(recvIPPacket.SourceIP), matchingPacket.EndTime.Sub(matchingPacket.StartTime)})
 		}
+		t.AppendSeparator()
 	}
+	t.Render()
 
 	return nil
 }
-
 func NewICMPPacket(ptype uint8, code uint8, data []byte) ICMPPacket {
 	packet := ICMPPacket{Type: ptype, Code: code, ID: 0x0000, SequenceNo: 0x0000, Data: data}
 	packet.Checksum = packet.ComputeChecksum()
@@ -152,8 +160,8 @@ func (p *ICMPPacket) Encode() ([]byte, error) {
 
 func DecodeICMPPacket(b []byte) (ICMPPacket, error) {
 	/* Check type */
-	code := b[1]
-	if code == 0x00 || code == 0x08 {
+	packetType := b[0]
+	if packetType == 0x00 || packetType == 0x08 {
 		return DecodeICMPEchoPacket(b)
 	} else {
 		return DecodeICMPOtherPacket(b)
@@ -213,6 +221,14 @@ func DecodeIPv4Packet(b []byte) (IPv4Packet, error) {
 	}
 	/* Arbitrarily assuming packet as 20 bytes */
 	return IPv4Packet{VersionAndIHL: b[0], TOS: b[1], TotalLen: binary.BigEndian.Uint16(b[2:4]), ID: binary.BigEndian.Uint16(b[4:6]), FlagsAndFragmentation: binary.BigEndian.Uint16(b[6:8]), TTL: b[8], ULProto: b[9], HeaderChecksum: binary.BigEndian.Uint16(b[10:12]), SourceIP: binary.BigEndian.Uint32(b[12:16]), DestIP: binary.BigEndian.Uint32(b[16:20]), Data: b[20:]}, nil
+}
+
+func uint32toIPv4(val uint32) (res [4]byte) {
+	for i := 3; i >= 0; i-- {
+		res[i] = uint8(0x00000000 | val)
+		val >>= 8
+	}
+	return res
 }
 
 /**
