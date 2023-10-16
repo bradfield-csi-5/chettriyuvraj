@@ -16,12 +16,17 @@
 #define SHELL_PROFILE "./.shellprofile"
 #define SLEEP_CMD "sleep"
 
+struct Token { /* Call to ParseArgs always returns a token */
+    char *s_next;
+    char *operator;
+};
+
 char *test_command = "pecho";
 char *test_argv[] = {"my name is yuvi", "5"};
 
 pid_t Fork(char *message);
 int Execvp(char *args[], char *errmsg);
-struct token ParseArgs(char *s, char *args[]);
+struct Token ParseArgs(char *s, char *args[]);
 int Builtin(char *args[]);
 void Alias(char *args[]);
 void AliasPrintAll(char *args[]);

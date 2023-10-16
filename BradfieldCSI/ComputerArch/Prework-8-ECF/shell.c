@@ -3,25 +3,19 @@
 #include<ctype.h>
 #include "shell.h"
 
-
-struct token { /* Call to ParseArgs always returns a token */
-    char *sNext;
-    char *operator;
-};
-
-int shellPid;
+int shell_pid;
 
 int main() {
     char *s = NULL, *check = NULL;
     char input[MAX_INPUT];
     char *args[MAX_ARGS];
-    int status, exitStatus;
-    struct token token = {
+    int status, exit_status;
+    struct Token token = {
         "\0",
         "\0"
     };
-    sigset_t mask, prevMask;
-    shellPid = getpid();
+    sigset_t mask, prev_mask;
+    shell_pid = getpid();
     
 
     signal(SIGINT, SigintHandler); /* Installing SIGINT handler  */
@@ -34,8 +28,8 @@ int main() {
 
         printf(SHELL_SYMBOL);
 
-        if (*token.sNext != '\0' && ContinueExec(token.operator, exitStatus)) { /* If operators were used, continue execution based on exit status */
-            s = token.sNext;
+        if (*token.s_next != '\0' && ContinueExec(token.operator, exit_status)) { /* If operators were used, continue execution based on exit status */
+            s = token.s_next;
         } else {
             s = fgets(input, MAX_INPUT, stdin);
         }
@@ -46,10 +40,10 @@ int main() {
             if (!Builtin(args)) {
                 pid_t pid = Fork(FORK_ERR);
                 if (pid == 0) {
-                    pid_t childPid = getpid();
-                    setpgid(childPid, childPid); /* We want to implement job control, so we will create separate pgid for each process */
+                    pid_t child_pid = getpid();
+                    setpgid(child_pid, child_pid); /* We want to implement job control, so we will create separate pgid for each process */
                     if (*token.operator != '&' ) {
-                        tcsetpgrp(STDIN_FILENO, childPid);
+                        tcsetpgrp(STDIN_FILENO, child_pid);
                     }
                     signal(SIGTTOU, SIG_DFL);
                     Execvp(args, COMMAND_ERR);
@@ -61,11 +55,11 @@ int main() {
                 
                 
                 if (*token.operator != '&' ) { /* Don't wait on background processes */
-                    while (waitpid(pid, &status, WUNTRACED) > 0);  /* Reaping child process and tracking last exitStatus*/
+                    while (waitpid(pid, &status, WUNTRACED) > 0);  /* Reaping child process and tracking last exit_status*/
                     if (WIFEXITED(status)) {
-                        exitStatus = WEXITSTATUS(status);
+                        exit_status = WEXITSTATUS(status);
                     }
-                    tcsetpgrp(STDIN_FILENO, getpgid(shellPid));
+                    tcsetpgrp(STDIN_FILENO, getpgid(shell_pid));
                     signal(SIGTTOU, SIG_DFL);
                 }
             }
@@ -101,18 +95,18 @@ pid_t Fork(char *errmsg) {
 
 /* Wrapper for execvp(..) with error handling */
 int Execvp(char *args[], char *errmsg) {
-    int resultStatus;
-    if ((resultStatus = execvp(args[0], args)) == -1) {
+    int result_status;
+    if ((result_status = execvp(args[0], args)) == -1) {
         printf("%s: %s", errmsg, strerror(errno));
     }
-    return resultStatus;
+    return result_status;
 }
 
 /* Parse args from input string */
-struct token ParseArgs(char *s, char *args[]) {
-    int argIdx = 0;
+struct Token ParseArgs(char *s, char *args[]) {
+    int arg_idx = 0;
     char *operator; /* To grab operators like && || */
-    struct token token = { 
+    struct Token token = { 
         "\0",
         "\0"
     };
@@ -124,10 +118,10 @@ struct token ParseArgs(char *s, char *args[]) {
 
         while (*++cur != ' ' && *cur != '\n' && *cur != '\0'); /* Find delimiter */
 
-        char *newArg = (char *)malloc(sizeof(char) * (cur - s + 1)); /* Malloc for arg when delimiter found, add to to arg array */
-        strncpy(newArg, s, cur-s);
-        newArg[cur-s] = '\0';
-        args[argIdx++] = newArg;
+        char *new_arg = (char *)malloc(sizeof(char) * (cur - s + 1)); /* Malloc for arg when delimiter found, add to to arg array */
+        strncpy(new_arg, s, cur-s);
+        new_arg[cur-s] = '\0';
+        args[arg_idx++] = new_arg;
 
         for (;*cur==' ' || *cur=='\n'; cur++); /* Skip additional spaces */
 
@@ -135,13 +129,13 @@ struct token ParseArgs(char *s, char *args[]) {
     }
 
     if (*operator != '\0') { /* If stopped parsing due to operator, return a token containing operator and start of next string */
-        token = (struct token) {
+        token = (struct Token) {
             s + strlen(operator), /* Might have additional spaces at the start, they will be handled by next call to ParseArgs */
             operator,
         };
     }
 
-    args[argIdx] = NULL;
+    args[arg_idx] = NULL;
 
     return token;
 }
@@ -162,31 +156,40 @@ char *GetOperator(char *s) {
 
 /* Execute and return 1 if Builtin, 0 otherwise */
 int Builtin(char *args[]) {
-    int returnStatus = 0;
+    int return_status = 0;
 
     if (strcmp("alias", args[0]) == 0) {
         Alias(args);
-        returnStatus = 1;
+        return_status = 1;
     } else if (strcmp("exit", args[0]) == 0) {
         printf("\n%sIf this is to end in fire, we should all burn together%s\n", SHELL_SYMBOL, SHELL_SYMBOL);
         exit(0);
     }
 
-    return returnStatus;
+    return return_status;
 }
 
-/*   alias -p and alias without arguments handled for now  */
+/*     */
+
+/**
+ * Builtin alias command implementation
+ * 
+ * Notes:
+ * - only alias -p and alias without arguments handled for now
+ * - multiple -p flags will lead to all alias-es being printed once
+ * - no arguments provided to alias = print all aliases
+ * 
+ * 
+ **/
 
 void Alias(char *args[]) {
     FILE *f;
-    int curChar;
-    int areAllPrinted = 0; /* Multiple -p flags will lead to all alias-es being printed once */
-    int isMatch; /* Used for overwriting aliases value */
-    char *valueOffsetArg;
-    char *matchStr;
-    fpos_t *valueOffset;
+    fpos_t *value_offset;
+    int cur_char, are_all_printed = 0, is_match; 
+    char *value_offset_arg, *match_str;
+    
 
-    if (*(args+1) == NULL) { /* No arguments provided to alias - print all aliases */
+    if (*(args+1) == NULL) {
         AliasPrintAll(args);
         return;
     }
@@ -199,10 +202,10 @@ void Alias(char *args[]) {
 
 
     while (*++args != NULL)  { /* Handle each arg independently  */
-        char *curStr = *args;
+        char *cur_str = *args;
 
-        if(strcmp(curStr, "-p") == 0 && !areAllPrinted) { /* If -p encountered and all alias-es not already printed once */
-            areAllPrinted = 1;
+        if(strcmp(cur_str, "-p") == 0 && !are_all_printed) { /* If -p encountered and all alias-es not already printed once */
+            are_all_printed = 1;
             AliasPrintAll(args);
             continue;
         }
@@ -212,32 +215,32 @@ void Alias(char *args[]) {
         
         /* For handling arguments other than -p */
         /* ------------------------------------------------------INCOMPLETE --------------------------------------------------------------------------- */
-        if((valueOffsetArg = strrchr(curStr, '=')) != NULL) { /* If assignment statement found, search in file and replace */
+        if((value_offset_arg = strrchr(cur_str, '=')) != NULL) { /* If assignment statement found, search in file and replace */
             f = fopen(SHELL_PROFILE, "r+");
-            curChar = '\0';
+            cur_char = '\0';
 
-            while (curChar != EOF) {
-                isMatch = 1;
-                matchStr = curStr; /* Compare char by char */
+            while (cur_char != EOF) {
+                is_match = 1;
+                match_str = cur_str; /* Compare char by char */
                 
-                while((curChar = fgetc(f)) != '\n' && curChar != EOF) {
-                    if (curChar == '=') {
-                        fgetpos(f, valueOffset); /* Record start of string position; TODO: handle error */
+                while((cur_char = fgetc(f)) != '\n' && cur_char != EOF) {
+                    if (cur_char == '=') {
+                        fgetpos(f, value_offset); /* Record start of string position; TODO: handle error */
                     }
-                    if (*matchStr++ != curChar){ /* If mismatch at any point, co */
-                        isMatch = 0;
+                    if (*match_str++ != cur_char){ /* If mis_match at any point, co */
+                        is_match = 0;
                         break;
                     }
                 }
 
-                if (isMatch) { /* Start writing from valueOffsetIdx+1 in curStr to valueOffset in file */
-                    fsetpos(f, valueOffset);
-                    for (char *s = valueOffsetArg + 1; *s != '\0'; s++) {
+                if (is_match) { /* Start writing from value_offsetIdx+1 in cur_str to value_offset in file */
+                    fsetpos(f, value_offset);
+                    for (char *s = value_offset_arg + 1; *s != '\0'; s++) {
                         fputc(*s, f); /* TODO: handle err */
                     }
                     fseek(f, 0, SEEK_END); /* TODO handle err */
                 } else { /* Iterate till EOF/EOL */
-                    while((curChar = fgetc(f)) != '\n' && curChar != EOF);
+                    while((cur_char = fgetc(f)) != '\n' && cur_char != EOF);
                 }
             }
 
@@ -254,13 +257,13 @@ void Alias(char *args[]) {
 
 void AliasPrintAll(char *args[]) {
     FILE *f;
-    int curChar;
+    int cur_char;
     if ((f = fopen(SHELL_PROFILE, "r")) == NULL) {
         printf("alias error: %s", strerror(errno));
         return;
     }
-    while ((curChar = fgetc(f)) != EOF){ /* Make sure \n exists in file itself */
-        fputc(curChar, stdout);
+    while ((cur_char = fgetc(f)) != EOF){ /* Make sure \n exists in file itself */
+        fputc(cur_char, stdout);
     }
     return;
 }
@@ -274,26 +277,26 @@ void SigintHandler(int sig) {
 void SigtstpHandler(int sig) {
     const char msg[] = "SIGTSTP caught\n";
     write(STDOUT_FILENO, msg, sizeof(msg)-1);
-    tcsetpgrp(STDIN_FILENO, getpgid(shellPid));
+    tcsetpgrp(STDIN_FILENO, getpgid(shell_pid));
     exit(0);
 }
 
 void SigchldHandler(int sig) {
     const char msg[] = "SIGCHLDcaught\n";
     write(STDOUT_FILENO, msg, sizeof(msg)-1);
-    printf("%d shellPgid", getpgid(shellPid));
-    tcsetpgrp(STDIN_FILENO, getpgid(shellPid));
+    printf("%d shellPgid", getpgid(shell_pid));
+    tcsetpgrp(STDIN_FILENO, getpgid(shell_pid));
     // exit(0);
     return;
 }
 
 
-/* Determine whether to continue execution or not depending on exitStatus and operator */
-int ContinueExec(char *operator, int exitStatus) {
+/* Determine whether to continue execution or not depending on exit_status and operator */
+int ContinueExec(char *operator, int exit_status) {
     if (strcmp(operator, "&&") == 0) {
-        return exitStatus == 0;
+        return exit_status == 0;
     } else if (strcmp(operator, "||") == 0) {
-        return exitStatus != 0;
+        return exit_status != 0;
     } else if (strcmp(operator, "&") == 0) {
         return 1;
     }
