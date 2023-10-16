@@ -252,7 +252,7 @@ void Alias(char *args[]) {
 }
 
 
-void aliasPrintAll(char *args[]) {
+void AliasPrintAll(char *args[]) {
     FILE *f;
     int curChar;
     if ((f = fopen(SHELL_PROFILE, "r")) == NULL) {
