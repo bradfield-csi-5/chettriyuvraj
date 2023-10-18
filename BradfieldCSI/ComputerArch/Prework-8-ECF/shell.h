@@ -14,10 +14,11 @@
 #define BUILTIN_EXEC 1
 #define SHELL_SYMBOL "\U0001f525"
 #define FORK_ERR "fork error"
-#define COMMAND_ERR "command does not exist"
+#define COMMAND_ERR "error executing command"
 #define SHELL_PROFILE "./.shellprofile"
 #define SLEEP_CMD "sleep"
 #define EXIT_MSG "\n%sIf this is to end in fire, we should all burn together%s\n"
+#define PATH "/bin"
 
 struct Token { /* Call to ParseArgs always returns a token */
     char *command;
@@ -30,7 +31,7 @@ char *test_command = "pecho";
 char *test_argv[] = {"my name is yuvi", "5"};
 
 pid_t Fork(char *message);
-int Execvp(char *args[], char *errmsg);
+int Execvp(char *command, char *args[], char *errmsg);
 struct Token ParseArgs(char *s);
 void ExecProgram(char *command, char *args[]);
 int Builtin(char *command, char *args[]);

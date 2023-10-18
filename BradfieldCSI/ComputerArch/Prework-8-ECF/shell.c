@@ -32,9 +32,14 @@ int main() {
     }
 }
 
-
+/**
+ * Forks a subprocess and executes program
+ **/
 void ExecProgram(char *command, char *args[]) {
-    
+    pid_t pid;
+    if ((pid = Fork(FORK_ERR)) == 0) {
+        Execvp(command, args, COMMAND_ERR);
+    }
 }
     
 
@@ -49,9 +54,18 @@ pid_t Fork(char *errmsg) {
 }
 
 /* Wrapper for execvp(..) with error handling */
-int Execvp(char *args[], char *errmsg) {
+int Execvp(char *command, char *args[], char *errmsg) {
+
+    /* Allocate new array to store command + args */
+    char **command_and_args = (char**)malloc(sizeof(char**) * MAX_ARGS);
+    command_and_args[0] = command;
+    for (int i = 1; args[i-1] != NULL; i++) {
+        command_and_args[i] = args[i-1];
+    }
+
+    /* Execute command */
     int result_status;
-    if ((result_status = execvp(args[0], args)) == -1) {
+    if ((result_status = execvp(command, command_and_args)) == -1) {
         printf("%s: %s", errmsg, strerror(errno));
     }
     return result_status;
@@ -215,30 +229,6 @@ void AliasPrintAll(char *args[]) {
     return;
 }
 
-void SigintHandler(int sig) {
-    const char msg[] = "SIGINT caught\n";
-    write(STDOUT_FILENO, msg, sizeof(msg)-1);
-    return;
-}
-
-void SigtstpHandler(int sig) {
-    const char msg[] = "SIGTSTP caught\n";
-    write(STDOUT_FILENO, msg, sizeof(msg)-1);
-    tcsetpgrp(STDIN_FILENO, getpgid(shell_pid));
-    exit(0);
-}
-
-void SigchldHandler(int sig) {
-    const char msg[] = "SIGCHLDcaught\n";
-    write(STDOUT_FILENO, msg, sizeof(msg)-1);
-    printf("%d shellPgid", getpgid(shell_pid));
-    tcsetpgrp(STDIN_FILENO, getpgid(shell_pid));
-    // exit(0);
-    return;
-}
-
-
-
 /****** HELPERS ******/
 
 
@@ -401,3 +391,27 @@ int ContinueExec(char *operator, int exit_status) {
 
 //     }
 // }
+
+
+/* 
+void SigintHandler(int sig) {
+    const char msg[] = "SIGINT caught\n";
+    write(STDOUT_FILENO, msg, sizeof(msg)-1);
+    return;
+}
+
+void SigtstpHandler(int sig) {
+    const char msg[] = "SIGTSTP caught\n";
+    write(STDOUT_FILENO, msg, sizeof(msg)-1);
+    tcsetpgrp(STDIN_FILENO, getpgid(shell_pid));
+    exit(0);
+}
+
+void SigchldHandler(int sig) {
+    const char msg[] = "SIGCHLDcaught\n";
+    write(STDOUT_FILENO, msg, sizeof(msg)-1);
+    printf("%d shellPgid", getpgid(shell_pid));
+    tcsetpgrp(STDIN_FILENO, getpgid(shell_pid));
+    // exit(0);
+    return;
+} */
