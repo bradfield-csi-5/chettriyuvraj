@@ -3,84 +3,40 @@
 #include<ctype.h>
 #include "shell.h"
 
-int shell_pid;
-
-
-
 int main() {
-    char *s = NULL, *check = NULL;
-    char input[MAX_INPUT];
-    char *args[MAX_ARGS];
-    int status, exit_status;
+    char input[MAX_INPUT], *s = NULL;
+    int exit_status;
     struct Token token = {NULL, NULL, NULL, NULL};
-    sigset_t mask, prev_mask;
-    shell_pid = getpid();
     
 
-    signal(SIGINT, SigintHandler); /* Installing SIGINT handler  */
-    signal(SIGTSTP, SigtstpHandler); /* Installing SIGTSTP handler */
-    signal(SIGCHLD, SigchldHandler); /* Installing SIGTSTP handler */
+    while(1) {
 
-
-
-    do {
-
-        printf(SHELL_SYMBOL);
-
-        if (token.s_next != NULL && ContinueExec(token.operator, exit_status)) { /* If operators were used, continue execution based on exit status */
+        /* Determine if previous statements continuation exists eg. "ls && ps" or to wait for new command */
+        if (token.s_next != NULL && ContinueExec(token.operator, exit_status)) {
             s = token.s_next;
         } else {
+            printf(SHELL_SYMBOL);
             s = fgets(input, MAX_INPUT, stdin);
         }
 
-        if (s) {
-            token = ParseArgs(s, args); /* parseArg will always return a token depending on operators used in expression */
-            signal(SIGTTOU, SIG_IGN);
-            if (!Builtin(args)) {
-                pid_t pid = Fork(FORK_ERR);
-                if (pid == 0) {
-                    pid_t child_pid = getpid();
-                    setpgid(child_pid, child_pid); /* We want to implement job control, so we will create separate pgid for each process */
-                    if (*token.operator != '&' ) {
-                        tcsetpgrp(STDIN_FILENO, child_pid);
-                    }
-                    signal(SIGTTOU, SIG_DFL);
-                    Execvp(args, COMMAND_ERR);
-                }
-                
+        /* Parse token from string*/
+        token = ParseArgs(s);
 
-                
-                
-                
-                
-                if (*token.operator != '&' ) { /* Don't wait on background processes */
-                    while (waitpid(pid, &status, WUNTRACED) > 0);  /* Reaping child process and tracking last exit_status*/
-                    if (WIFEXITED(status)) {
-                        exit_status = WEXITSTATUS(status);
-                    }
-                    tcsetpgrp(STDIN_FILENO, getpgid(shell_pid));
-                    signal(SIGTTOU, SIG_DFL);
-                }
-            }
+        /* Check and execute depending on Builtin or command */
+        if (Builtin(token.command,token.args) == BUILTIN_EXEC) {
+            continue;
+        } else {
+            ExecProgram(token.command, token.args);
         }
 
-        if (s && !strchr(s, '\n')) { /* If newline not found, print first MAX chars and flush remaining - why was this condition written (?)*/
-            while ((s = fgets(input, MAX_INPUT, stdin)) && !strchr(s, '\n'));
-            printf("\n");
-        }
-    
-    } while(s != NULL);
-    
-
-
-    if (!feof(stdin)) { /* If EOF is not set i.e error */
-        printf("\n Error while reading input");
-        return 1;
     }
-
-    printf("\n%sIf this is to end in fire, we should all burn together%s\n", SHELL_SYMBOL, SHELL_SYMBOL);
-    return 0;
 }
+
+
+void ExecProgram(char *command, char *args[]) {
+    
+}
+    
 
 /* Wrapper for fork() with error handling */
 pid_t Fork(char *errmsg) {
@@ -111,10 +67,14 @@ int Execvp(char *args[], char *errmsg) {
  *      c) s_next ie pointer to next command "ps"
  *      d) *operator ie "&&"
  **/
-struct Token ParseArgs(char *s, char *args[]) {
+struct Token ParseArgs(char *s) {
 
     struct Token token = {NULL, NULL, NULL, NULL};
     int arg_idx = 0;
+
+    if (s == NULL) {
+        return token;
+    }
 
     /* Skip initial spaces */
     for(;*s==' ';s++);
@@ -157,45 +117,6 @@ struct Token ParseArgs(char *s, char *args[]) {
     return token;
 }
 
-/**
- * Recognizes only valid operators, parses the valid operator and returns it
- * Currently valid operators are:
- * - &&
- * - || 
- * -  &
- * -  |
- **/
-
-char *GetOperator(char *s) {
-    char *operator = "\0";
-    if ((*s == '&' && *(s+1) == '&' && *(s+2) == ' ') || (*s == '|' && *(s+1) == '|' && *(s+2) == ' ')) {
-        operator = (char *)malloc(3 * sizeof(char));
-        strncpy(operator, s, 2);
-        operator[2] = '\0';
-    } else if ((*s == '|' && *(s+1) == ' ') || (*s == '&' && *(s+1) == ' ')) {
-        operator = (char *)malloc(2 * sizeof(char));
-        strncpy(operator, s, 1);
-        operator[1] = '\0';
-    }
-    return operator;
-}
-
-/* Execute and return 1 if Builtin, 0 otherwise */
-int Builtin(char *args[]) {
-    int return_status = 0;
-
-    if (strcmp("alias", args[0]) == 0) {
-        Alias(args);
-        return_status = 1;
-    } else if (strcmp("exit", args[0]) == 0) {
-        printf("\n%sIf this is to end in fire, we should all burn together%s\n", SHELL_SYMBOL, SHELL_SYMBOL);
-        exit(0);
-    }
-
-    return return_status;
-}
-
-/*     */
 
 /**
  * Builtin alias command implementation
@@ -317,7 +238,63 @@ void SigchldHandler(int sig) {
 }
 
 
-/* Determine whether to continue execution or not depending on exit_status and operator */
+
+/****** HELPERS ******/
+
+
+/**
+ * Helper to execute Builtins
+ *
+ * - Implemented only the alias builtin for now
+ * - TODO: implement more builtins
+ **/
+
+int Builtin(char *command, char *args[]) {
+    int return_status = BUILTIN_NO_EXEC;
+
+    if (command == NULL) {
+        return return_status;
+    } 
+    
+    if (strcmp("alias", command) == 0) {
+        Alias(args);
+        return_status = BUILTIN_EXEC;
+    } else if (strcmp("exit", command) == 0) {
+        printf(EXIT_MSG, SHELL_SYMBOL, SHELL_SYMBOL);
+        exit(0);
+    }
+
+    return return_status;
+}
+
+/**
+ * Recognizes only valid operators, parses the valid operator and returns it
+ * Currently valid operators are:
+ * - &&
+ * - || 
+ * -  &
+ * -  |
+ **/
+
+char *GetOperator(char *s) {
+    char *operator = "\0";
+    if ((*s == '&' && *(s+1) == '&' && *(s+2) == ' ') || (*s == '|' && *(s+1) == '|' && *(s+2) == ' ')) {
+        operator = (char *)malloc(3 * sizeof(char));
+        strncpy(operator, s, 2);
+        operator[2] = '\0';
+    } else if ((*s == '|' && *(s+1) == ' ') || (*s == '&' && *(s+1) == ' ')) {
+        operator = (char *)malloc(2 * sizeof(char));
+        strncpy(operator, s, 1);
+        operator[1] = '\0';
+    }
+    return operator;
+}
+
+
+/**
+ * Determine if execution is to be continued,
+ * depending on if a known operator is found
+ **/
 int ContinueExec(char *operator, int exit_status) {
     if (strcmp(operator, "&&") == 0) {
         return exit_status == 0;
@@ -344,7 +321,83 @@ int ContinueExec(char *operator, int exit_status) {
  * 
  **/
 
+
+
+
 /**
  * Rules:
+ * 
  * - Commands, flags, operators must be separated by a space delimiter ie "ls&&ps" is invalid
+ * - Valid operators: &&, ||, &, |
  **/
+
+
+
+
+
+// int main() {
+//     char *s = NULL, *check = NULL;
+//     char input[MAX_INPUT];
+//     char *args[MAX_ARGS];
+//     int status, exit_status;
+//     struct Token token = {NULL, NULL, NULL, NULL};
+//     sigset_t mask, prev_mask;
+//     shell_pid = getpid();
+    
+
+//     // signal(SIGINT, SigintHandler); /* Installing SIGINT handler  */
+//     // signal(SIGTSTP, SigtstpHandler); /* Installing SIGTSTP handler */
+//     // signal(SIGCHLD, SigchldHandler); /* Installing SIGTSTP handler */
+
+
+//     while(1) {
+        
+
+//          /* Determine if previous command's execution to be continued or to wait for new command */
+//         if (token.s_next != NULL && ContinueExec(token.operator, exit_status)) {
+//             s = token.s_next;
+//         } else {
+//             printf(SHELL_SYMBOL);
+//             s = fgets(input, MAX_INPUT, stdin);
+//         }
+
+//         // if (s) {
+//             // token = ParseArgs(s, args); /* parseArg will always return a token depending on operators used in expression */
+//             // signal(SIGTTOU, SIG_IGN);
+//             // pid_t pid = Fork(FORK_ERR);
+//             // if (pid == 0) {
+//             //     pid_t child_pid = getpid();
+//             //     setpgid(child_pid, child_pid); /* We want to implement job control, so we will create separate pgid for each process */
+//             //     if (*token.operator != '&' ) {
+//             //         tcsetpgrp(STDIN_FILENO, child_pid);
+//             //     }
+//             //     signal(SIGTTOU, SIG_DFL);
+//             //     Execvp(args, COMMAND_ERR);
+//             // }
+            
+//             // if (*token.operator != '&' ) { /* Don't wait on background processes */
+//             //     while (waitpid(pid, &status, WUNTRACED) > 0);  /* Reaping child process and tracking last exit_status*/
+//             //     if (WIFEXITED(status)) {
+//             //         exit_status = WEXITSTATUS(status);
+//             //     }
+//             //     tcsetpgrp(STDIN_FILENO, getpgid(shell_pid));
+//             //     signal(SIGTTOU, SIG_DFL);
+//             // }
+//         // }
+
+//         token = ParseArgs(s);
+
+//         /* Check and execute if command is a builtin */
+//         if (Builtin(token.command,token.args) == BUILTIN_EXEC) {
+//             continue;
+//         } else {
+//             ExecToken(token.command, token.args);
+//         }
+
+//         // if (s && !strchr(s, '\n')) { /* If newline not found, print first MAX chars and flush remaining - why was this condition written (?)*/
+//         //     while ((s = fgets(input, MAX_INPUT, stdin)) && !strchr(s, '\n'));
+//         //     printf("\n");
+//         // }
+
+//     }
+// }
