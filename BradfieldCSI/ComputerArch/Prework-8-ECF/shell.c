@@ -5,15 +5,14 @@
 
 int shell_pid;
 
+
+
 int main() {
     char *s = NULL, *check = NULL;
     char input[MAX_INPUT];
     char *args[MAX_ARGS];
     int status, exit_status;
-    struct Token token = {
-        "\0",
-        "\0"
-    };
+    struct Token token = {NULL, NULL, NULL, NULL};
     sigset_t mask, prev_mask;
     shell_pid = getpid();
     
@@ -28,7 +27,7 @@ int main() {
 
         printf(SHELL_SYMBOL);
 
-        if (*token.s_next != '\0' && ContinueExec(token.operator, exit_status)) { /* If operators were used, continue execution based on exit status */
+        if (token.s_next != NULL && ContinueExec(token.operator, exit_status)) { /* If operators were used, continue execution based on exit status */
             s = token.s_next;
         } else {
             s = fgets(input, MAX_INPUT, stdin);
@@ -102,43 +101,70 @@ int Execvp(char *args[], char *errmsg) {
     return result_status;
 }
 
-/* Parse args from input string */
+/**
+ * Parse args from input string:
+ * 
+ * - Parses string till an operator is encountered ie given a string "ls -a && ps", parses "ls", parses "-a" grabs "&&", and notes the position of "ps"
+ * - Returns this info as a token, token contains: 
+ *      a) command ie "ls"
+ *      b) args ie ["-a"] in an array
+ *      c) s_next ie pointer to next command "ps"
+ *      d) *operator ie "&&"
+ **/
 struct Token ParseArgs(char *s, char *args[]) {
+
+    struct Token token = {NULL, NULL, NULL, NULL};
     int arg_idx = 0;
-    char *operator; /* To grab operators like && || */
-    struct Token token = { 
-        "\0",
-        "\0"
-    };
 
-    for(;*s==' ';s++) ; /* Skip initial spaces */
+    /* Skip initial spaces */
+    for(;*s==' ';s++);
 
-    char *cur = s;
-    while (*s != '\0' && *(operator = GetOperator(s)) == '\0') {
+    /* Use a separate variable to traverse so we can calculate length of the command/arg we are traversing*/
+    char *cur_s = s;
 
-        while (*++cur != ' ' && *cur != '\n' && *cur != '\0'); /* Find delimiter */
+    /* Iterate until string ends or an operator is found */
+    while (*s != '\0' && *(token.operator = GetOperator(s)) == '\0') {
 
-        char *new_arg = (char *)malloc(sizeof(char) * (cur - s + 1)); /* Malloc for arg when delimiter found, add to to arg array */
-        strncpy(new_arg, s, cur-s);
-        new_arg[cur-s] = '\0';
-        args[arg_idx++] = new_arg;
+        /* Find delimiter */
+        for(;*cur_s != ' ' && *cur_s != '\n' && *cur_s != '\0'; cur_s++);
 
-        for (;*cur==' ' || *cur=='\n'; cur++); /* Skip additional spaces */
+        /* Allocate space for command/arg */
+        char *new_arg = (char *)malloc(sizeof(char) * (cur_s - s + 1));
+        strncpy(new_arg, s, cur_s-s);
+        new_arg[cur_s-s] = '\0';
 
-        s = cur;
+        /* Determine whether we have parsed a command or an arg */
+        if (token.command == NULL) {
+            token.command = new_arg;
+        } else {
+            token.args[arg_idx++] = new_arg;
+        }
+
+        /* Skip additional spaces */
+        for (;*cur_s==' ' || *cur_s=='\n'; cur_s++);
+
+        /* Bring s to par with cur_s's position */
+        s = cur_s;
     }
 
-    if (*operator != '\0') { /* If stopped parsing due to operator, return a token containing operator and start of next string */
-        token = (struct Token) {
-            s + strlen(operator), /* Might have additional spaces at the start, they will be handled by next call to ParseArgs */
-            operator,
-        };
+    /* If stopped parsing due to operator, additional tokens may exist, provide index to start of next command */
+    if (token.operator != NULL) { 
+        token.s_next = s + strlen(token.operator);
     }
 
-    args[arg_idx] = NULL;
+    token.args[arg_idx] = NULL;
 
     return token;
 }
+
+/**
+ * Recognizes only valid operators, parses the valid operator and returns it
+ * Currently valid operators are:
+ * - &&
+ * - || 
+ * -  &
+ * -  |
+ **/
 
 char *GetOperator(char *s) {
     char *operator = "\0";
@@ -304,6 +330,7 @@ int ContinueExec(char *operator, int exit_status) {
 }
 
 
+/* Notes */
 
 /**
  * Naming convention
@@ -315,4 +342,9 @@ int ContinueExec(char *operator, int exit_status) {
  * thisismyconvention [optional] very local and temporary variables (such like a for() loop index)
  * 
  * 
+ **/
+
+/**
+ * Rules:
+ * - Commands, flags, operators must be separated by a space delimiter ie "ls&&ps" is invalid
  **/

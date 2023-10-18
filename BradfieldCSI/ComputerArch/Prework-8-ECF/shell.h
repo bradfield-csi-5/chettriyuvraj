@@ -17,8 +17,10 @@
 #define SLEEP_CMD "sleep"
 
 struct Token { /* Call to ParseArgs always returns a token */
-    char *s_next;
+    char *command;
+    char *args[MAX_ARGS];
     char *operator;
+    char *s_next;
 };
 
 char *test_command = "pecho";
