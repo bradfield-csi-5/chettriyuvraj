@@ -13,6 +13,8 @@
 #define BUILTIN_NO_EXEC 0
 #define BUILTIN_EXEC 1
 #define SHELL_SYMBOL "\U0001f525"
+#define PROCESS_REAP_SUCCESS "child %d exited normally"
+#define PROCESS_REAP_FAILURE "child %d exited abnormally"
 #define FORK_ERR "fork error"
 #define COMMAND_ERR "error executing command"
 #define SHELL_PROFILE "./.shellprofile"

@@ -37,8 +37,20 @@ int main() {
  **/
 void ExecProgram(char *command, char *args[]) {
     pid_t pid;
+    int status;
+
+    /* Fork child */
     if ((pid = Fork(FORK_ERR)) == 0) {
         Execvp(command, args, COMMAND_ERR);
+    }
+
+    /* Reap child process */
+    while ((pid = wait(&status)) > 0) {
+        if WIFEXITED(status) {
+            printf(PROCESS_REAP_SUCCESS, pid);
+        } else {
+            printf(PROCESS_REAP_FAILURE, pid);
+        }
     }
 }
     
