@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"go/ast"
+	"go/token"
 	"strconv"
 	"strings"
 )
@@ -57,37 +58,93 @@ halt
 */
 
 func evalReturn(node *ast.ReturnStmt) ([]strings.Builder, error) {
-	var b strings.Builder
-
 	/* Since its the return statement, we are expecting a single elem in node.Results */
-	val, err := evalExpr(node.Results[0])
+	var b strings.Builder
+	sb, err := evalExpr(node.Results[0])
 	if err != nil {
 		return nil, err
 	}
-	fmt.Fprintf(&b, "pushi %d\npop 0\nhalt", val)
-	// fmt.Printf("\n\n string %s\n\n", b.String())
-	return []strings.Builder{b}, nil
+
+	b.WriteString("pop 0\nhalt\n")
+	sb = append(sb, b)
+	return sb, nil
 }
 
-func evalExpr(node ast.Expr) (byte, error) {
-	var res byte
+func evalExpr(node ast.Expr) ([]strings.Builder, error) {
+	var res []strings.Builder
 	var err error
-
-	// fmt.Printf("\n\n %s", node)
 
 	switch n := node.(type) {
 	case *ast.BasicLit:
-		// fmt.Printf("\n\n node val %s", n.Value)
+		var b strings.Builder
+
 		tempRes, tempErr := strconv.Atoi(n.Value)
 		err = tempErr
 		if err != nil {
 			break
 		}
-		res = byte(tempRes)
+
+		fmt.Fprintf(&b, "pushi %d\n", byte(tempRes))
+		res = append(res, b)
+
+	case *ast.BinaryExpr:
+		leftRes, tempErr := evalExpr(n.X)
+		err = tempErr
+		if err != nil {
+			break
+		}
+		res = append(res, leftRes...)
+
+		rightRes, tempErr := evalExpr(n.Y)
+		err = tempErr
+		if err != nil {
+			break
+		}
+		res = append(res, rightRes...)
+		res = append(res, getOpAsStringBuilder(n.Op))
+
+	case *ast.ParenExpr:
+		tempRes, tempErr := evalExpr(n.X)
+		err = tempErr
+		if err != nil {
+			break
+		}
+
+		res = tempRes
 	}
 
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	return res, nil
+}
+
+func evalOp(left byte, right byte, op token.Token) byte {
+	var res byte
+	switch x := op; x {
+	case token.ADD:
+		res = left + right
+	case token.SUB:
+		res = left - right
+	case token.MUL:
+		res = left * right
+	case token.QUO:
+		res = left / right
+	}
+	return res
+}
+
+func getOpAsStringBuilder(op token.Token) strings.Builder {
+	var res strings.Builder
+	switch x := op; x {
+	case token.ADD:
+		res.WriteString("add\n")
+	case token.SUB:
+		res.WriteString("sub\n")
+	case token.MUL:
+		res.WriteString("mul\n")
+	case token.QUO:
+		res.WriteString("div\n")
+	}
+	return res
 }
