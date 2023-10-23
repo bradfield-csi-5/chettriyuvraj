@@ -22,12 +22,12 @@ var nextMemoryLocation int = 3
 
 func compile(node *ast.FuncDecl) (string, error) {
 
-	/* Assumptions */
+	/* Variables always expected in these locations */
 	varToMem["x"] = 1
 	varToMem["y"] = 2
 
 	/* node.Body always expected to be BlockStmt */
-	res, err := evalNode(node.Body)
+	res, err := evalStmt(node.Body)
 	if err != nil {
 		return "", err
 	}
@@ -35,7 +35,22 @@ func compile(node *ast.FuncDecl) (string, error) {
 	return res, nil
 }
 
-func evalNode(node ast.Stmt) (string, error) {
+/****** Functions for evaluating interface types ******/
+
+/**
+ * Evaluate nodes implementing the Stmt interface
+ *
+ * @param ast.Stmt
+ * @return string
+ * @return error
+ *
+ * - Concrete type check
+ * - Evaluate the concrete type to get its assembly
+ * - Append result to string builder
+ * - Return string builder as string
+ **/
+
+func evalStmt(node ast.Stmt) (string, error) {
 	var sb strings.Builder
 	var res string
 	var err error
@@ -51,7 +66,7 @@ func evalNode(node ast.Stmt) (string, error) {
 		res, err = evalFor(n)
 	case *ast.BlockStmt:
 		for _, blockNode := range n.List {
-			blockRes, err := evalNode(blockNode)
+			blockRes, err := evalStmt(blockNode)
 			if err != nil {
 				break
 			}
@@ -63,137 +78,22 @@ func evalNode(node ast.Stmt) (string, error) {
 		return "", err
 	}
 	sb.WriteString(res)
-	return sb.String(), nil
-}
-
-/* General Format of ReturnStmt to assembly:
-pushi <evaluated value>
-pop 0
-halt
-*/
-
-func evalReturn(node *ast.ReturnStmt) (string, error) {
-	var sb strings.Builder
-
-	/* Since its the return statement, we are expecting a single elem in node.Results */
-	res, err := evalExpr(node.Results[0])
-	if err != nil {
-		return "", err
-	}
-
-	sb.WriteString(res)
-	sb.WriteString("pop 0\nhalt\n")
-	return sb.String(), nil
-}
-
-/* General Format of AssignStmt to assembly:
-{assembly for evaluated expression which puts it on top of the stack}
-pop <next memory location>
-*/
-
-func evalAssign(node *ast.AssignStmt) (string, error) {
-	var sb strings.Builder
-
-	/* Since its the assign stmt, we are expecting an identifier on the LHS */
-	exprRes, err := evalExpr(node.Rhs[0])
-	if err != nil {
-		return "", err
-	}
-	sb.WriteString(exprRes)
-
-	/* Expecting Ident on LHS */
-	ident, ok := node.Lhs[0].(*ast.Ident)
-	if ok != true {
-		return "", fmt.Errorf("invalid RHS of assignment")
-	}
-
-	/* Take assignment var, (record in map for later reference depending - might be new/existing), also generate assembly to pop it to memory location*/
-	varName := ident.Name
-	existingMemoryLocation, exists := varToMem[varName]
-	if exists != true {
-		varToMem[varName] = nextMemoryLocation
-		fmt.Fprintf(&sb, "pop %d\n", nextMemoryLocation)
-		nextMemoryLocation += 1
-		return sb.String(), nil
-	}
-
-	fmt.Fprintf(&sb, "pop %d\n", existingMemoryLocation)
-	return sb.String(), nil
-}
-
-/* Currently handles only single if/else block */
-func evalIfElse(node *ast.IfStmt) (string, error) {
-	var sb strings.Builder
-
-	/* Determine which if label to be executed depending on result of if body */
-	sbcond, err := evalExpr(node.Cond)
-	if err != nil {
-		return "", err
-	}
-
-	/* We will assign all conditions a label */
-	sbif, err := evalNode(node.Body)
-	if err != nil {
-		return "", err
-	}
-
-	sbelse, err := evalNode(node.Else)
-	if err != nil {
-		return "", err
-	}
-
-	/* Append in sequence to create assembly for if else statement */
-	sb.WriteString(sbcond)
-	sb.WriteString("jeqz l2\n")
-	sb.WriteString("label l1\n")
-	sb.WriteString(sbif)
-	sb.WriteString("label l2\n")
-	sb.WriteString(sbelse)
 
 	return sb.String(), nil
 }
 
-/* General Format of ForStmt to assembly:
-{condition evaluate and jump}
-label f1:
-{assembly for inner expr}
-{condition evaluate and jump}
-pop <next memory location>
-*/
-
-/*
-pushi 1
-ne      -> 0 != 1 -> 1 So in case where
-
-ne      -> 1 != 1 -> 0
-*/
-
-func evalFor(node *ast.ForStmt) (string, error) {
-	/* Jump to loop test */
-	var sb strings.Builder
-
-	/* Label l2 - condition: Repeat loop content if condition satisfied, inverting result of condition so we can use jeqz to loop*/
-	sbcond, err := evalExpr(node.Cond)
-	if err != nil {
-		return "", err
-	}
-
-	/* Label l1 - loop body*/
-	sbbody, err := evalNode(node.Body)
-	if err != nil {
-		return "", err
-	}
-
-	/* Append in sequence to create assembly for if else statement */
-	sb.WriteString("jump l2\n")
-	sb.WriteString("label l1\n")
-	sb.WriteString(sbbody)
-	sb.WriteString("label l2\n")
-	sb.WriteString(sbcond)
-	sb.WriteString("pushi 1\nneq\njeqz l1\n")
-
-	return sb.String(), nil
-}
+/**
+ * Evaluate nodes implementing Expr Interface
+ *
+ * @param ast.Expr
+ * @return string
+ * @return error
+ *
+ * - Type check for concrete type of node
+ * - Generate assembly for concrete type
+ * - Return assembly as string
+ *
+ **/
 
 func evalExpr(node ast.Expr) (string, error) {
 	var sb strings.Builder
@@ -252,20 +152,200 @@ func evalExpr(node ast.Expr) (string, error) {
 	return sb.String(), nil
 }
 
-func evalOp(left byte, right byte, op token.Token) byte {
-	var res byte
-	switch x := op; x {
-	case token.ADD:
-		res = left + right
-	case token.SUB:
-		res = left - right
-	case token.MUL:
-		res = left * right
-	case token.QUO:
-		res = left / right
+/****** Functions for evaluating concrete types ******/
+
+/**
+ * Evaluate nodes of concrete type ReturnStmt
+ *
+ * @param *ast.ReturnStmt
+ * @return string
+ * @return error
+ *
+ * General Format of ReturnStmt to assembly:
+ * pushi <evaluated value of expreesion>
+ * pop 0
+ * halt
+ *
+ * - Extract node of interface type ast.Expr from node.Result list
+ * - Grab the assembly as result of evaluating the expression
+ * - Generate assembly in correct format
+ * - Return generated assembly as string
+ **/
+
+func evalReturn(node *ast.ReturnStmt) (string, error) {
+	var sb strings.Builder
+
+	/* Since its the return statement, we are expecting a single elem in node.Results */
+	res, err := evalExpr(node.Results[0])
+	if err != nil {
+		return "", err
 	}
-	return res
+
+	sb.WriteString(res)
+	sb.WriteString("pop 0\nhalt\n")
+	return sb.String(), nil
 }
+
+/**
+ * Evaluate nodes of concrete type ast.AssignStmt
+ *
+ * @param *ast.AssignStmt
+ * @return string
+ * @return error
+ *
+ * General Format of AssignStmt to assembly:
+ * {assembly for evaluated expression which puts result on top of the stack}
+ * pop <correct memory location>
+ *
+ * - Grab result of evaluating expression on RHS of assignment
+ * - Grab identifier on LHS of expression
+ * - Generate assembly in correct format
+ * - Return assembly as string
+ **/
+
+func evalAssign(node *ast.AssignStmt) (string, error) {
+	var sb strings.Builder
+
+	/* Since its the assign stmt, we are expecting an expression on the RHS */
+	exprRes, err := evalExpr(node.Rhs[0])
+	if err != nil {
+		return "", err
+	}
+
+	/* Expecting Ident on LHS */
+	ident, ok := node.Lhs[0].(*ast.Ident)
+	if ok != true {
+		return "", fmt.Errorf("invalid RHS of assignment")
+	}
+
+	/* Generate assembly to pop it to memory location, depending on new or existing variable*/
+	sb.WriteString(exprRes)
+
+	varName := ident.Name
+	existingMemoryLocation, exists := varToMem[varName]
+	if exists != true {
+		varToMem[varName] = nextMemoryLocation
+		fmt.Fprintf(&sb, "pop %d\n", nextMemoryLocation)
+		nextMemoryLocation += 1
+	} else {
+		fmt.Fprintf(&sb, "pop %d\n", existingMemoryLocation)
+	}
+
+	return sb.String(), nil
+}
+
+/**
+ * Evaluate nodes of the concrete type ast.IfStmt
+ *
+ * @param *ast.IfStmt
+ * @return string
+ * @return error
+ *
+ * General Format of IfStmt to assembly:
+ * {assembly for condition evaluation}
+ * jeqz l2
+ * label l1
+ * {assembly for if block}
+ * label l2
+ * {assemblyt for else block}
+ *
+ * - Generate assembly from evaluating condition
+ * - Generate assembly for if block
+ * - Generate assembly for else block
+ * - Generate assembly for if-else by combining these along with jeqz and labels
+ * - Return assembly as string
+ *
+ * NOTE:
+ * 1. Label names hardcoded so can't evaluate multiple nested blocks or if-else inside for loop
+ **/
+
+func evalIfElse(node *ast.IfStmt) (string, error) {
+	var sb strings.Builder
+
+	/* Generate ssembly for condition statement */
+	sbcond, err := evalExpr(node.Cond)
+	if err != nil {
+		return "", err
+	}
+
+	/* We will assign all conditions a label */
+	sbif, err := evalStmt(node.Body)
+	if err != nil {
+		return "", err
+	}
+
+	sbelse, err := evalStmt(node.Else)
+	if err != nil {
+		return "", err
+	}
+
+	/* Append in sequence to create assembly for if else statement */
+	sb.WriteString(sbcond)
+	sb.WriteString("jeqz l2\n")
+	sb.WriteString("label l1\n")
+	sb.WriteString(sbif)
+	sb.WriteString("label l2\n")
+	sb.WriteString(sbelse)
+
+	return sb.String(), nil
+}
+
+/**
+ * Evaluate nodes of the concrete type ForStmt
+ *
+ * @param *ast.ForStmt
+ * @return string
+ * @return error
+ *
+ * General Format of ForStmt to assembly:
+ * jump l2
+ * label l1:
+ * {assembly for loop block}
+ * label l2:
+ * {assembly for loop condition}
+ * pushi 1
+ * neq
+ * jeqz l1
+ * pop <next memory location>
+ *
+ * - Generate assembly for evaluating loop condition
+ * - Generate assembly for loop block
+ * - Generate assembly for entire loop by combining these along with jeqz, neq and labels
+ * - Return assembly as string
+ *
+ * NOTE:
+ * 1. We invert the result of the loop condition using neq so that jeqz can be used to jump to loop block
+ * 2. Label names hardcoded so can't evaluate multiple nested blocks or if-else inside for loop
+ **/
+
+func evalFor(node *ast.ForStmt) (string, error) {
+	/* Jump to loop test */
+	var sb strings.Builder
+
+	/* Label l2 - condition: Repeat loop content if condition satisfied, inverting result of condition so we can use jeqz to loop*/
+	sbcond, err := evalExpr(node.Cond)
+	if err != nil {
+		return "", err
+	}
+
+	/* Label l1 - loop body*/
+	sbbody, err := evalStmt(node.Body)
+	if err != nil {
+		return "", err
+	}
+
+	/* Append in sequence to create assembly for if else statement */
+	sb.WriteString("jump l2\n")
+	sb.WriteString("label l1\n")
+	sb.WriteString(sbbody)
+	sb.WriteString("label l2\n")
+	sb.WriteString(sbcond)
+	sb.WriteString("pushi 1\nneq\njeqz l1\n")
+
+	return sb.String(), nil
+}
+
+/****** Helpers ******/
 
 func getOpAsStringBuilder(op token.Token) string {
 	var res strings.Builder
@@ -287,9 +367,3 @@ func getOpAsStringBuilder(op token.Token) string {
 	}
 	return res.String()
 }
-
-/*
-
-ne
-
-*/
