@@ -22,23 +22,19 @@ var nextMemoryLocation int = 3
 
 func compile(node *ast.FuncDecl) (string, error) {
 	var b strings.Builder
-	assemblyList := make([]strings.Builder, 0)
 
 	/* Assumptions */
 	varToMem["x"] = 1
 	varToMem["y"] = 2
 
-	/* Iterate over Body.List of FuncDecl */
-	for _, n := range node.Body.List {
-		assembly, err := evalNode(n)
-		if err != nil {
-			return "", err
-		}
-		assemblyList = append(assemblyList, assembly...)
+	/* node.Body always expected to be BlockStmt */
+	sbList, err := evalNode(node.Body)
+	if err != nil {
+		return "", err
 	}
 
 	/* Compile all string builders into one */
-	for _, sb := range assemblyList {
+	for _, sb := range sbList {
 		fmt.Fprintf(&b, sb.String())
 	}
 
