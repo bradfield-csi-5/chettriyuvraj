@@ -56,8 +56,18 @@ func evalNode(node ast.Stmt) ([]strings.Builder, error) {
 		res, err = evalAssign(n)
 	case *ast.IfStmt:
 		res, err = evalIfElse(n)
+	case *ast.ForStmt:
+		res, err = evalFor(n)
 	case *ast.BlockStmt:
-		res, err = evalNode(n.List[0])
+		var blockRes []strings.Builder
+		for _, blockNode := range n.List {
+			curBlockRes, err := evalNode(blockNode)
+			if err != nil {
+				break
+			}
+			blockRes = append(blockRes, curBlockRes...)
+		}
+		res = blockRes
 	}
 
 	if err != nil {
@@ -104,18 +114,23 @@ func evalAssign(node *ast.AssignStmt) ([]strings.Builder, error) {
 		return nil, fmt.Errorf("invalid RHS of assignment")
 	}
 
-	/* Take assignment var, record it in map for later reference, also generate assembly to pop it to memory location*/
+	/* Take assignment var, (record in map for later reference depending - might be new/existing), also generate assembly to pop it to memory location*/
 	varName := ident.Name
-	varToMem[varName] = nextMemoryLocation
-	fmt.Fprintf(&b, "pop %d\n", nextMemoryLocation)
-	nextMemoryLocation += 1
-	sb = append(sb, b)
+	existingMemoryLocation, exists := varToMem[varName]
+	if exists != true {
+		varToMem[varName] = nextMemoryLocation
+		fmt.Fprintf(&b, "pop %d\n", nextMemoryLocation)
+		nextMemoryLocation += 1
+		sb = append(sb, b)
+		return sb, nil
+	}
 
+	fmt.Fprintf(&b, "pop %d\n", existingMemoryLocation)
+	sb = append(sb, b)
 	return sb, nil
 }
 
-/* Currently handles only single if/else */
-
+/* Currently handles only single if/else block */
 func evalIfElse(node *ast.IfStmt) ([]strings.Builder, error) {
 	sb := []strings.Builder{}
 	var l1, l2 strings.Builder
@@ -127,6 +142,9 @@ func evalIfElse(node *ast.IfStmt) ([]strings.Builder, error) {
 	if err != nil {
 		return nil, err
 	}
+	condStr := strings.Builder{}
+	condStr.WriteString("jeqz l2\n")
+	sbcond = append(sbcond, condStr)
 
 	/* We will assign all conditions a label */
 	sbif, err := evalNode(node.Body)
@@ -144,6 +162,54 @@ func evalIfElse(node *ast.IfStmt) ([]strings.Builder, error) {
 	sb = append(sb, sbif...)
 	sb = append(sb, l2)
 	sb = append(sb, sbelse...)
+
+	return sb, nil
+}
+
+/* General Format of ForStmt to assembly:
+{condition evaluate and jump}
+label f1:
+{assembly for inner expr}
+{condition evaluate and jump}
+pop <next memory location>
+*/
+
+/*
+pushi 1
+ne      -> 0 != 1 -> 1 So in case where
+
+ne      -> 1 != 1 -> 0
+*/
+
+func evalFor(node *ast.ForStmt) ([]strings.Builder, error) {
+	/* Jump to loop test */
+	var s strings.Builder
+	fmt.Fprint(&s, "jump l2\n")
+
+	/* Define labels for loop content (l1) and loop test (l2) */
+	sb := []strings.Builder{s}
+	var l1, l2 strings.Builder
+	l1.WriteString("label l1\n")
+	l2.WriteString("label l2\n")
+
+	/* Repeat loop content if condition satisfied, inverting result of condition so we can use jeqz to loop*/
+	sbcond, err := evalExpr(node.Cond)
+	if err != nil {
+		return nil, err
+	}
+	condStr := strings.Builder{}
+	condStr.WriteString("pushi 1\nneq\njeqz l1\n")
+	sbcond = append(sbcond, condStr)
+
+	sbbody, err := evalNode(node.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	sb = append(sb, l1)
+	sb = append(sb, sbbody...)
+	sb = append(sb, l2)
+	sb = append(sb, sbcond...)
 
 	return sb, nil
 }
@@ -236,7 +302,17 @@ func getOpAsStringBuilder(op token.Token) strings.Builder {
 	case token.QUO:
 		res.WriteString("div\n")
 	case token.EQL:
-		res.WriteString("eq\njeqz l2\n")
+		res.WriteString("eq\n")
+	case token.LSS:
+		res.WriteString("lt\n")
+	case token.GTR:
+		res.WriteString("gt\n")
 	}
 	return res
 }
+
+/*
+
+ne
+
+*/
