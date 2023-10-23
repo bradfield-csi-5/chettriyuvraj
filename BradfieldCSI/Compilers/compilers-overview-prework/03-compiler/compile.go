@@ -27,16 +27,17 @@ func compile(node *ast.FuncDecl) (string, error) {
 	varToMem["y"] = 2
 
 	/* node.Body always expected to be BlockStmt */
-	sb, err := evalNode(node.Body)
+	res, err := evalNode(node.Body)
 	if err != nil {
 		return "", err
 	}
 
-	return sb.String(), nil
+	return res, nil
 }
 
-func evalNode(node ast.Stmt) (*strings.Builder, error) {
-	res := &strings.Builder{}
+func evalNode(node ast.Stmt) (string, error) {
+	var sb strings.Builder
+	var res string
 	var err error
 
 	switch n := node.(type) {
@@ -54,14 +55,15 @@ func evalNode(node ast.Stmt) (*strings.Builder, error) {
 			if err != nil {
 				break
 			}
-			res.WriteString(blockRes.String())
+			sb.WriteString(blockRes)
 		}
 	}
 
 	if err != nil {
-		return &strings.Builder{}, err
+		return "", err
 	}
-	return res, nil
+	sb.WriteString(res)
+	return sb.String(), nil
 }
 
 /* General Format of ReturnStmt to assembly:
@@ -70,15 +72,18 @@ pop 0
 halt
 */
 
-func evalReturn(node *ast.ReturnStmt) (*strings.Builder, error) {
+func evalReturn(node *ast.ReturnStmt) (string, error) {
+	var sb strings.Builder
+
 	/* Since its the return statement, we are expecting a single elem in node.Results */
-	sb, err := evalExpr(node.Results[0])
+	res, err := evalExpr(node.Results[0])
 	if err != nil {
-		return &strings.Builder{}, err
+		return "", err
 	}
 
+	sb.WriteString(res)
 	sb.WriteString("pop 0\nhalt\n")
-	return sb, nil
+	return sb.String(), nil
 }
 
 /* General Format of AssignStmt to assembly:
@@ -86,17 +91,20 @@ func evalReturn(node *ast.ReturnStmt) (*strings.Builder, error) {
 pop <next memory location>
 */
 
-func evalAssign(node *ast.AssignStmt) (*strings.Builder, error) {
+func evalAssign(node *ast.AssignStmt) (string, error) {
+	var sb strings.Builder
+
 	/* Since its the assign stmt, we are expecting an identifier on the LHS */
-	sb, err := evalExpr(node.Rhs[0])
+	exprRes, err := evalExpr(node.Rhs[0])
 	if err != nil {
-		return &strings.Builder{}, err
+		return "", err
 	}
+	sb.WriteString(exprRes)
 
 	/* Expecting Ident on LHS */
 	ident, ok := node.Lhs[0].(*ast.Ident)
 	if ok != true {
-		return &strings.Builder{}, fmt.Errorf("invalid RHS of assignment")
+		return "", fmt.Errorf("invalid RHS of assignment")
 	}
 
 	/* Take assignment var, (record in map for later reference depending - might be new/existing), also generate assembly to pop it to memory location*/
@@ -104,43 +112,45 @@ func evalAssign(node *ast.AssignStmt) (*strings.Builder, error) {
 	existingMemoryLocation, exists := varToMem[varName]
 	if exists != true {
 		varToMem[varName] = nextMemoryLocation
-		fmt.Fprintf(sb, "pop %d\n", nextMemoryLocation)
+		fmt.Fprintf(&sb, "pop %d\n", nextMemoryLocation)
 		nextMemoryLocation += 1
-		return sb, nil
+		return sb.String(), nil
 	}
 
-	fmt.Fprintf(sb, "pop %d\n", existingMemoryLocation)
-	return sb, nil
+	fmt.Fprintf(&sb, "pop %d\n", existingMemoryLocation)
+	return sb.String(), nil
 }
 
 /* Currently handles only single if/else block */
-func evalIfElse(node *ast.IfStmt) (*strings.Builder, error) {
+func evalIfElse(node *ast.IfStmt) (string, error) {
+	var sb strings.Builder
 
 	/* Determine which if label to be executed depending on result of if body */
 	sbcond, err := evalExpr(node.Cond)
 	if err != nil {
-		return &strings.Builder{}, err
+		return "", err
 	}
-	sbcond.WriteString("jeqz l2\n")
 
 	/* We will assign all conditions a label */
 	sbif, err := evalNode(node.Body)
 	if err != nil {
-		return &strings.Builder{}, err
+		return "", err
 	}
 
 	sbelse, err := evalNode(node.Else)
 	if err != nil {
-		return &strings.Builder{}, err
+		return "", err
 	}
 
 	/* Append in sequence to create assembly for if else statement */
-	sbcond.WriteString("label l1\n")
-	sbcond.WriteString(sbif.String())
-	sbcond.WriteString("label l2\n")
-	sbcond.WriteString(sbelse.String())
+	sb.WriteString(sbcond)
+	sb.WriteString("jeqz l2\n")
+	sb.WriteString("label l1\n")
+	sb.WriteString(sbif)
+	sb.WriteString("label l2\n")
+	sb.WriteString(sbelse)
 
-	return sbcond, nil
+	return sb.String(), nil
 }
 
 /* General Format of ForStmt to assembly:
@@ -158,35 +168,35 @@ ne      -> 0 != 1 -> 1 So in case where
 ne      -> 1 != 1 -> 0
 */
 
-func evalFor(node *ast.ForStmt) (*strings.Builder, error) {
+func evalFor(node *ast.ForStmt) (string, error) {
 	/* Jump to loop test */
 	var sb strings.Builder
 
 	/* Label l2 - condition: Repeat loop content if condition satisfied, inverting result of condition so we can use jeqz to loop*/
 	sbcond, err := evalExpr(node.Cond)
 	if err != nil {
-		return &strings.Builder{}, err
+		return "", err
 	}
-	sbcond.WriteString("pushi 1\nneq\njeqz l1\n")
 
 	/* Label l1 - loop body*/
 	sbbody, err := evalNode(node.Body)
 	if err != nil {
-		return &strings.Builder{}, err
+		return "", err
 	}
 
 	/* Append in sequence to create assembly for if else statement */
 	sb.WriteString("jump l2\n")
 	sb.WriteString("label l1\n")
-	sb.WriteString(sbbody.String())
+	sb.WriteString(sbbody)
 	sb.WriteString("label l2\n")
-	sb.WriteString(sbcond.String())
+	sb.WriteString(sbcond)
+	sb.WriteString("pushi 1\nneq\njeqz l1\n")
 
-	return &sb, nil
+	return sb.String(), nil
 }
 
-func evalExpr(node ast.Expr) (*strings.Builder, error) {
-	var res strings.Builder
+func evalExpr(node ast.Expr) (string, error) {
+	var sb strings.Builder
 	var err error
 
 	switch n := node.(type) {
@@ -198,7 +208,7 @@ func evalExpr(node ast.Expr) (*strings.Builder, error) {
 			break
 		}
 
-		fmt.Fprintf(&res, "pushi %d\n", byte(tempRes))
+		fmt.Fprintf(&sb, "pushi %d\n", byte(tempRes))
 
 	case *ast.Ident:
 		memoryLocation, exists := varToMem[n.Name]
@@ -207,7 +217,7 @@ func evalExpr(node ast.Expr) (*strings.Builder, error) {
 			break
 		}
 
-		fmt.Fprintf(&res, "push %d\n", memoryLocation)
+		fmt.Fprintf(&sb, "push %d\n", memoryLocation)
 
 	case *ast.BinaryExpr:
 		leftRes, tempErr := evalExpr(n.X)
@@ -215,7 +225,7 @@ func evalExpr(node ast.Expr) (*strings.Builder, error) {
 		if err != nil {
 			break
 		}
-		res.WriteString(leftRes.String())
+		sb.WriteString(leftRes)
 
 		rightRes, tempErr := evalExpr(n.Y)
 		err = tempErr
@@ -223,8 +233,8 @@ func evalExpr(node ast.Expr) (*strings.Builder, error) {
 			break
 		}
 		opsb := getOpAsStringBuilder(n.Op)
-		res.WriteString(rightRes.String())
-		res.WriteString(opsb.String())
+		sb.WriteString(rightRes)
+		sb.WriteString(opsb)
 
 	case *ast.ParenExpr:
 		tempRes, tempErr := evalExpr(n.X)
@@ -233,13 +243,13 @@ func evalExpr(node ast.Expr) (*strings.Builder, error) {
 			break
 		}
 
-		res.WriteString(tempRes.String())
+		sb.WriteString(tempRes)
 	}
 
 	if err != nil {
-		return &strings.Builder{}, err
+		return "", err
 	}
-	return &res, nil
+	return sb.String(), nil
 }
 
 func evalOp(left byte, right byte, op token.Token) byte {
@@ -257,7 +267,7 @@ func evalOp(left byte, right byte, op token.Token) byte {
 	return res
 }
 
-func getOpAsStringBuilder(op token.Token) *strings.Builder {
+func getOpAsStringBuilder(op token.Token) string {
 	var res strings.Builder
 	switch x := op; x {
 	case token.ADD:
@@ -275,7 +285,7 @@ func getOpAsStringBuilder(op token.Token) *strings.Builder {
 	case token.GTR:
 		res.WriteString("gt\n")
 	}
-	return &res
+	return res.String()
 }
 
 /*
