@@ -54,8 +54,10 @@ func evalNode(node ast.Stmt) ([]strings.Builder, error) {
 		res, err = evalReturn(n)
 	case *ast.AssignStmt:
 		res, err = evalAssign(n)
-		/* 	case *ast.IfStmt:
-		res, err = evalIfElse(n) */
+	case *ast.IfStmt:
+		res, err = evalIfElse(n)
+	case *ast.BlockStmt:
+		res, err = evalNode(n.List[0])
 	}
 
 	if err != nil {
@@ -112,35 +114,39 @@ func evalAssign(node *ast.AssignStmt) ([]strings.Builder, error) {
 	return sb, nil
 }
 
-// func evalIfElse(node *ast.IfStmt) ([]strings.Builder, error) {
-// 	sb := []strings.Builder{}
-// 	var l1, l2 strings.Builder
-// 	l1.WriteString("l1:\n")
-// 	l2.WriteString("l2:\n")
+/* Currently handles only single if/else */
 
-// 	/* Determine which if label to be executed depending on result of if body */
-// 	sbcond, err := evalExpr(node.Cond)
-// 	if err != nil {
-// 		return nil, err
-// 	}
+func evalIfElse(node *ast.IfStmt) ([]strings.Builder, error) {
+	sb := []strings.Builder{}
+	var l1, l2 strings.Builder
+	l1.WriteString("label l1\n")
+	l2.WriteString("label l2\n")
 
-// 	/* We will assign all conditions a label */
-// 	sbif, err := evalNode(node.Body)
-// 	if err != nil {
-// 		return nil, err
-// 	}
+	/* Determine which if label to be executed depending on result of if body */
+	sbcond, err := evalExpr(node.Cond)
+	if err != nil {
+		return nil, err
+	}
 
-// 	sbelse, err := evalNode(node.Else)
-// 	if err != nil {
-// 		return nil, err
-// 	}
+	/* We will assign all conditions a label */
+	sbif, err := evalNode(node.Body)
+	if err != nil {
+		return nil, err
+	}
 
-// 	sb = append(sb, sbcond...)
-// 	sb = append(sb, sbif...)
-// 	sb = append(sb, sbelse...)
+	sbelse, err := evalNode(node.Else)
+	if err != nil {
+		return nil, err
+	}
 
-// 	return sb, nil
-// }
+	sb = append(sb, sbcond...)
+	sb = append(sb, l1)
+	sb = append(sb, sbif...)
+	sb = append(sb, l2)
+	sb = append(sb, sbelse...)
+
+	return sb, nil
+}
 
 func evalExpr(node ast.Expr) ([]strings.Builder, error) {
 	var res []strings.Builder
@@ -230,7 +236,7 @@ func getOpAsStringBuilder(op token.Token) strings.Builder {
 	case token.QUO:
 		res.WriteString("div\n")
 	case token.EQL:
-		res.WriteString("eq\njeqz l2")
+		res.WriteString("eq\njeqz l2\n")
 	}
 	return res
 }
