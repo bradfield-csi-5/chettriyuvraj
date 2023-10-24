@@ -20,6 +20,7 @@
 #define SHELL_PROFILE "./.shellprofile"
 #define SLEEP_CMD "sleep"
 #define EXIT_MSG "\n%sIf this is to end in fire, we should all burn together%s\n"
+#define SIGINT_MSG "SIGINT Caught! %d"
 #define PATH "/bin"
 
 struct Token { /* Call to ParseArgs always returns a token */
@@ -35,11 +36,12 @@ char *test_argv[] = {"my name is yuvi", "5"};
 pid_t Fork(char *message);
 int Execvp(char *command, char *args[], char *errmsg);
 struct Token ParseArgs(char *s);
-void ExecProgram(char *command, char *args[]);
+int ExecProgram(char *command, char *args[]);
 int Builtin(char *command, char *args[]);
 void Alias(char *args[]);
 void AliasPrintAll(char *args[]);
 void SigintHandler(int sig);
+void SigintChildHandler(int sig);
 void SigtstpHandler(int sig);
 void SigchldHandler(int sig);
 char *GetOperator(char *s);

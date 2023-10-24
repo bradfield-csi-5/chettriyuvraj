@@ -8,6 +8,7 @@ pid_t child_pid = 0;
 
 int main() {
     char input[MAX_INPUT], *s = NULL;
+    /* Keep track of exit_status for continuing/discontinuing execution of commands with operators eg && */
     int exit_status;
     struct Token token = {NULL, NULL, NULL, NULL};
     
@@ -31,18 +32,18 @@ int main() {
         if (Builtin(token.command,token.args) == BUILTIN_EXEC) {
             continue;
         } else {
-            ExecProgram(token.command, token.args);
+            exit_status = ExecProgram(token.command, token.args);
         }
 
     }
 }
 
 /**
- * Forks a subprocess and executes program
+ * Forks a subprocess, executes program and returns exit_status
  **/
-void ExecProgram(char *command, char *args[]) {
+int ExecProgram(char *command, char *args[]) {
     pid_t pid;
-    int status;
+    int status, exit_status;
 
     /* Fork child, create new process group for it and then execute */
     if ((pid = Fork(FORK_ERR)) == 0) {
@@ -53,14 +54,19 @@ void ExecProgram(char *command, char *args[]) {
     /* Set global variable child_pid */
     child_pid = pid;
 
-    /* Reap child process */
+    /* Reap child process - is while loop required here (?)*/
     while ((pid = wait(&status)) > 0) {
         if WIFEXITED(status) {
             printf(PROCESS_REAP_SUCCESS, pid);
+            /* Exit status of normally terminated process */
+            exit_status = WEXITSTATUS(status);
         } else {
             printf(PROCESS_REAP_FAILURE, pid);
+            /* Not grabbing exact exit status of abnormally terminated process currently - set it to arbitrary value */
+            exit_status = 2;
         }
     }
+    return exit_status;
 }
     
 
