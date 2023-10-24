@@ -3,11 +3,16 @@
 #include<ctype.h>
 #include "shell.h"
 
+/* Global variable to keep track of forked children */
+pid_t child_pid = 0;
+
 int main() {
     char input[MAX_INPUT], *s = NULL;
     int exit_status;
     struct Token token = {NULL, NULL, NULL, NULL};
     
+    /* Installing signal handlers */
+    signal(SIGINT, SigintHandler);
 
     while(1) {
 
@@ -39,10 +44,14 @@ void ExecProgram(char *command, char *args[]) {
     pid_t pid;
     int status;
 
-    /* Fork child */
+    /* Fork child, create new process group for it and then execute */
     if ((pid = Fork(FORK_ERR)) == 0) {
+        setpgid(0,0);
         Execvp(command, args, COMMAND_ERR);
     }
+
+    /* Set global variable child_pid */
+    child_pid = pid;
 
     /* Reap child process */
     while ((pid = wait(&status)) > 0) {
@@ -243,7 +252,6 @@ void AliasPrintAll(char *args[]) {
 
 /****** HELPERS ******/
 
-
 /**
  * Helper to execute Builtins
  *
@@ -308,8 +316,26 @@ int ContinueExec(char *operator, int exit_status) {
     return 0; /* Unknown operator */
 }
 
+/****** SIGNAL HANDLERS ******/
 
-/* Notes */
+void SigintHandler(int sig) {
+    const char msg[] = "SIGINT caught - terminating child\n";
+    /* If child_pid is set, terminate it */
+    if (child_pid > 0) {
+        kill(child_pid, SIGTERM);
+        child_pid = 0;
+    }
+    write(STDOUT_FILENO, msg, sizeof(msg)-1);
+    return;
+}
+
+void SigintChildHandler(int sig) {
+    printf("Sitgint child\n");
+    exit(0);
+}
+
+
+/****** NOTES ******/
 
 /**
  * Naming convention
