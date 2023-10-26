@@ -36,7 +36,7 @@ char *test_argv[] = {"my name is yuvi", "5"};
 pid_t Fork(char *message);
 int Execvp(char *command, char *args[], char *errmsg);
 struct Token ParseArgs(char *s);
-int ExecProgram(char *command, char *args[]);
+int ExecProgram(char *command, char *args[], int is_foreground);
 int Builtin(char *command, char *args[]);
 void Alias(char *args[]);
 void AliasPrintAll(char *args[]);
@@ -45,6 +45,6 @@ void SigintChildHandler(int sig);
 void SigtstpHandler(int sig);
 void SigchldHandler(int sig);
 char *GetOperator(char *s);
-int ContinueExec(char *operator, int exitStatus);
+int ContinueExec(char *operator, int exit_status);
 
 #endif

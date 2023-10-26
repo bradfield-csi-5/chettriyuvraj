@@ -8,8 +8,8 @@ pid_t child_pid = 0;
 
 int main() {
     char input[MAX_INPUT], *s = NULL;
-    /* Keep track of exit_status for continuing/discontinuing execution of commands with operators eg && */
-    int exit_status;
+    /* Keep track of exit_status of previously executed command for continuing/discontinuing execution of current commands with operators eg && */
+    int exit_status = 1;
     struct Token token = {NULL, NULL, NULL, NULL};
     
     /* Installing signal handlers */
@@ -32,7 +32,9 @@ int main() {
         if (Builtin(token.command,token.args) == BUILTIN_EXEC) {
             continue;
         } else {
-            exit_status = ExecProgram(token.command, token.args);
+            /* sleep 30 & sleep 40 -> sleep 30 & is background */
+            int is_background = (strcmp(token.operator, "&") == 0);
+            exit_status = ExecProgram(token.command, token.args, is_background);
         }
 
     }
@@ -41,9 +43,10 @@ int main() {
 /**
  * Forks a subprocess, executes program and returns exit_status
  **/
-int ExecProgram(char *command, char *args[]) {
+int ExecProgram(char *command, char *args[], int is_background) {
     pid_t pid;
     int status, exit_status;
+    int is_foreground = !is_background;
 
     /* Fork child, create new process group for it and then execute */
     if ((pid = Fork(FORK_ERR)) == 0) {
@@ -54,8 +57,8 @@ int ExecProgram(char *command, char *args[]) {
     /* Set global variable child_pid */
     child_pid = pid;
 
-    /* Reap child process - is while loop required here (?)*/
-    while ((pid = wait(&status)) > 0) {
+    /* Reap child process - wait on execd children only if background process - is while loop required here (?)*/
+    while (is_foreground && (pid = wait(&status)) > 0) {
         if WIFEXITED(status) {
             printf(PROCESS_REAP_SUCCESS, pid);
             /* Exit status of normally terminated process */
@@ -328,10 +331,11 @@ void SigintHandler(int sig) {
     const char msg[] = "SIGINT caught - terminating child\n";
     /* If child_pid is set, terminate it */
     if (child_pid > 0) {
+        write(STDOUT_FILENO, msg, sizeof(msg)-1);
         kill(child_pid, SIGTERM);
         child_pid = 0;
     }
-    write(STDOUT_FILENO, msg, sizeof(msg)-1);
+    
     return;
 }
 
